@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SanChase Demo</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+    <style>
+      body { font-family: sans-serif; margin: 0; }
+      #top { padding: 10px; }
+      #map { height: 72vh; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+      input, select, button { padding: 8px; }
+      #log { height: 100px; overflow: auto; white-space: pre-wrap; background: #111; color: #ddd; padding: 8px; }
+    </style>
+  </head>
+  <body>
+    <div id="top">
+      <div class="row">
+        <input id="name" placeholder="Name" />
+        <input id="room" placeholder="Room code" />
+        <button id="join">Join</button>
+      </div>
+      <div class="row" id="host-controls">
+        <select id="fugitive-selection"><option value="random">Fugitive random</option><option value="manual">Fugitive manual</option></select>
+        <button id="create">Create Room</button>
+        <select id="fugitive-picker"></select>
+        <button id="select-fugitive">Set Fugitive</button>
+        <button id="start-launch">Launch (rally)</button>
+        <button id="start-chase">Force Start Chase</button>
+      </div>
+      <div class="row">
+        <button id="ready">Toggle Ready</button>
+        <button id="decoy">Use Decoy Reveal</button>
+        <button id="noise">Cop Noise Ping</button>
+        <button id="arrest">Attempt Arrest</button>
+        <button id="mission-hold">Hold Mission (30s)</button>
+        <select id="mission-picker"></select>
+        <span id="status">Disconnected</span>
+      </div>
+    </div>
+    <div id="map"></div>
+    <div id="log"></div>
+
+    <script src="/config.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

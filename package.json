@@ -1,0 +1,22 @@
+{
+  "name": "sanchase",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "tsx services/game-server/src/server.ts",
+    "dev:web": "tsx apps/web/src/dev-server.ts",
+    "start:server": "node --import tsx services/game-server/src/server.ts",
+    "start:web": "node --import tsx apps/web/src/dev-server.ts",
+    "build:web": "node scripts/build-web.mjs",
+    "build": "npm run build:web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sim": "node packages/sim/src/run-sim.mjs"
+  }
+}
