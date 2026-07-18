@@ -13,7 +13,7 @@ Web-first, real-world city chase game inspired by Scotland Yard.
 
 - `npm run build:web` (outputs static site to `dist/web`)
 - Backend runs with `npm run start:server`
-- Deployment instructions: `docs/deployment.md`
+- Deployment instructions: `docs/deployment-oracle.md` (free Oracle VM + Cloudflare Pages)
 
 ## Structure
 
