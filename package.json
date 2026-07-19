@@ -11,6 +11,8 @@
   "scripts": {
     "dev:server": "tsx services/game-server/src/server.ts",
     "dev:web": "tsx apps/web/src/dev-server.ts",
+    "dev:gateway": "tsx apps/web/src/gateway-server.ts",
+    "dev:tunnel": "bash scripts/mac/start-tunneled-dev.sh",
     "start:server": "node --import tsx services/game-server/src/server.ts",
     "start:web": "node --import tsx apps/web/src/dev-server.ts",
     "build:web": "node scripts/build-web.mjs",

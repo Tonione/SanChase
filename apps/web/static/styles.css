@@ -453,6 +453,126 @@ input::placeholder {
   50% { opacity: 0.75; }
 }
 
+.play-area-assessment {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.85);
+  font-size: 0.8rem;
+  margin-bottom: 8px;
+  line-height: 1.45;
+}
+
+.play-area-assessment .assessment-title {
+  font-weight: 800;
+  font-size: 0.82rem;
+  margin-bottom: 4px;
+}
+
+.play-area-assessment .assessment-metrics {
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.play-area-assessment .assessment-hint {
+  color: #cbd5e1;
+}
+
+.play-area-assessment.balanced { border-color: rgba(74, 222, 128, 0.45); }
+.play-area-assessment.balanced .assessment-title { color: #86efac; }
+
+.play-area-assessment.tight { border-color: rgba(96, 165, 250, 0.45); }
+.play-area-assessment.tight .assessment-title { color: #93c5fd; }
+
+.play-area-assessment.large,
+.play-area-assessment.too_large { border-color: rgba(245, 158, 11, 0.45); }
+.play-area-assessment.large .assessment-title,
+.play-area-assessment.too_large .assessment-title { color: #fcd34d; }
+
+.play-area-assessment.too_small { border-color: rgba(248, 113, 113, 0.45); }
+.play-area-assessment.too_small .assessment-title { color: #fca5a5; }
+
+.play-area-controls {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.play-area-controls-compact {
+  flex: 1 1 100%;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.play-area-controls-compact label {
+  flex: 1 1 100%;
+}
+
+.play-area-controls-compact input[type="range"] {
+  flex: 1 1 160px;
+  margin: 0;
+}
+
+.play-area-controls-compact .play-area-presets {
+  flex: 1 1 100%;
+}
+
+.play-area-controls label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.82rem;
+  margin-bottom: 6px;
+  color: var(--muted);
+}
+
+.play-area-controls .radius-value {
+  font-weight: 800;
+  color: #e2e8f0;
+}
+
+.play-area-controls input[type="range"] {
+  width: 100%;
+  margin: 4px 0 8px;
+}
+
+.play-area-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.play-area-presets .btn.active {
+  border-color: rgba(96, 165, 250, 0.65);
+  color: #93c5fd;
+}
+
+.organizer-options {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.75);
+  font-size: 0.82rem;
+}
+
+.organizer-options summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: #cbd5e1;
+  user-select: none;
+}
+
+.organizer-options[open] summary {
+  margin-bottom: 8px;
+}
+
 .map-emoji-marker {
   background: none !important;
   border: none !important;
@@ -689,6 +809,12 @@ input::placeholder {
   line-height: 1;
   margin-bottom: 8px;
   animation: game-over-pulse 2s ease-in-out infinite;
+}
+
+.game-start-overlay .game-over-outcome {
+  color: #e2e8f0;
+  text-shadow: 0 0 40px rgba(226, 232, 240, 0.45);
+  animation: game-over-pulse 1.8s ease-in-out 2;
 }
 
 .game-over-overlay.player-win .game-over-outcome {

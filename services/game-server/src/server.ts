@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import { ClientMessageSchema, DEV_MISSION_HOLD_SEC, GameState, isCopScanActive, ServerMessage } from "../../../packages/shared/src/index.js";
+import { ClientMessageSchema, DEV_MISSION_HOLD_SEC, GameState, assessPlayArea, isCopScanActive, playAreaRadiusInfo, ServerMessage } from "../../../packages/shared/src/index.js";
 import { RoomManager } from "./room-manager.js";
 
 const manager = new RoomManager();
@@ -36,7 +36,7 @@ wss.on("connection", (socket) => {
       if (msg.type === "set_ready") return sync(msg.roomId, manager.setReady(msg.roomId, msg.playerId, msg.ready).state);
       if (msg.type === "select_fugitive") return sync(msg.roomId, manager.selectFugitive(msg.roomId, msg.by, msg.fugitiveId).state);
       if (msg.type === "start_game") return sync(msg.roomId, manager.startGame(msg.roomId, msg.by).state);
-      if (msg.type === "start_chase") return sync(msg.roomId, manager.startChase(msg.roomId, msg.by).state);
+      if (msg.type === "start_chase") return sync(msg.roomId, manager.startChase(msg.roomId, msg.by, msg.force ?? false).state);
       if (msg.type === "use_decoy_reveal") return sync(msg.roomId, manager.useDecoyReveal(msg.roomId, msg.by).state);
       if (msg.type === "use_cop_scan") {
         const room = manager.useCopScan(msg.roomId, msg.by);
@@ -91,6 +91,9 @@ wss.on("connection", (socket) => {
         broadcastToCops(msg.roomId, room.state, { type: "reveal_positions", positions: manager.revealPositions(msg.roomId) });
         return;
       }
+      if (msg.type === "set_play_area_radius") {
+        return sync(msg.roomId, manager.setPlayAreaRadius(msg.roomId, msg.by, msg.radiusM).state);
+      }
       if (msg.type === "location_update") {
         return sync(msg.roomId, manager.updateLocation(msg.roomId, msg.playerId, msg.location, msg.simulated ?? false).state);
       }
@@ -118,7 +121,21 @@ function sync(roomId: string, state: GameState) {
   for (const [playerId, ws] of roomSockets.entries()) {
     if (ws.readyState !== WebSocket.OPEN) continue;
     const sanitized = sanitizeStateForPlayer(state, playerId);
-    ws.send(JSON.stringify({ type: "state_sync", state: sanitized, startEligibility: manager.startEligibility(roomId) }));
+    const playAreaAssessment = state.playArea
+      ? assessPlayArea({
+          radiusM: state.playArea.radiusM,
+          playerCount: Object.keys(state.players).length,
+          durationSec: state.durationSec,
+          preset: state.settings.boundaryPreset
+        })
+      : null;
+    ws.send(JSON.stringify({
+      type: "state_sync",
+      state: sanitized,
+      startEligibility: manager.startEligibility(roomId),
+      playAreaAssessment,
+      playAreaRadius: playAreaRadiusInfo(state)
+    }));
   }
 }
 

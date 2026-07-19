@@ -23,6 +23,7 @@ export const RoomSettingsSchema = z.object({
   minPlayersToStart: z.number().int().min(2).default(6),
   boundaryPreset: z.enum(["district_small", "district_medium", "district_large"]),
   fugitiveSelection: FugitiveSelectionSchema.default("random"),
+  playAreaRadiusM: z.number().positive().optional(),
   actionToggles: z.record(ActionTypeSchema, z.boolean())
 });
 export type RoomSettings = z.infer<typeof RoomSettingsSchema>;
@@ -59,6 +60,12 @@ export const MissionSchema = z.object({
 });
 export type Mission = z.infer<typeof MissionSchema>;
 
+export const PlayAreaSchema = z.object({
+  center: CoordinatesSchema,
+  radiusM: z.number().positive()
+});
+export type PlayArea = z.infer<typeof PlayAreaSchema>;
+
 export const GameStateSchema = z.object({
   roomId: z.string().min(3),
   phase: GamePhaseSchema,
@@ -67,6 +74,7 @@ export const GameStateSchema = z.object({
   settings: RoomSettingsSchema,
   players: z.record(z.string(), PlayerSchema),
   fugitiveId: z.string().nullable(),
+  playArea: PlayAreaSchema.nullable().default(null),
   rallyPoints: z.record(z.string(), CoordinatesSchema),
   missions: z.array(MissionSchema),
   revealUntilTick: z.number().int().nonnegative(),

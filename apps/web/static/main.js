@@ -15,6 +15,8 @@ let rallyFlagMarker = null;
 let revealMarkers = [];
 const missionMarkers = new Map();
 let debriefMarker = null;
+let boundaryMaskLayer = null;
+let boundaryBorderLayer = null;
 let holdTimer = null;
 let holdMissionId = null;
 let simLocation = defaultSimLocation();
@@ -22,6 +24,11 @@ let mapClickBound = false;
 let audioCtx = null;
 let audioUnlocked = false;
 let pendingMissionResult = null;
+let lastRenderedPhase = null;
+let startOverlayTimer = null;
+let playAreaAssessment = null;
+let playAreaRadius = null;
+let radiusSliderDragging = false;
 
 const MISSION_HOLD_SEC = () => (devMode ? 5 : 30);
 const MISSION_HIT_M = 15;
@@ -43,6 +50,8 @@ ws.onmessage = (ev) => {
   const msg = JSON.parse(ev.data);
   if (msg.type === "state_sync") {
     currentState = msg.state;
+    playAreaAssessment = msg.playAreaAssessment ?? null;
+    playAreaRadius = msg.playAreaRadius ?? null;
     me = currentState.players[myId] ?? null;
     if (pendingMissionResult && currentState.fugitiveId === myId) {
       const mission = currentState.missions.find((m) => m.id === pendingMissionResult.missionId);
@@ -96,7 +105,7 @@ $("btn-create").onclick = () => {
   const name = $("name").value.trim() || "Organisateur";
   if (!roomId) return showToast("Entrez un code de salle");
   const fugitiveSelection = $("fugitive-selection").value;
-  const minPlayers = isLocalDev() ? 2 : 6;
+  const minPlayers = devMode ? 2 : 6;
   ws.send(JSON.stringify({
     type: "create_room",
     roomId,
@@ -214,9 +223,11 @@ function renderLobby(eligibility) {
   });
   if (currentState.fugitiveId) {
     picker.value = currentState.fugitiveId;
-  } else if (previousPick && currentState.players[previousPick]) {
+  } else   if (previousPick && currentState.players[previousPick]) {
     picker.value = previousPick;
   }
+
+  renderPlayAreaControls("lobby");
 }
 
 function renderGame(eligibility) {
@@ -237,6 +248,10 @@ function renderGame(eligibility) {
     const { reached, total } = countRallyReached();
     rallyProgressEl.classList.remove("hidden");
     rallyProgressEl.textContent = `${reached}/${total} joueur${total > 1 ? "s" : ""} en position`;
+    if (currentState.playArea?.radiusM) {
+      const km = (currentState.playArea.radiusM / 1000).toFixed(1);
+      rallyProgressEl.textContent += ` · Zone ${km} km`;
+    }
     if (currentState.rallyPoints[myId]) {
       const reachedSelf = me.reachedRally;
       rallyBanner.innerHTML = reachedSelf
@@ -269,7 +284,156 @@ function renderGame(eligibility) {
 
   renderMapLayers();
   renderGameActions(eligibility);
+  renderPlayAreaAssessment();
+  renderPlayAreaControls("game");
+  renderGameStart();
   renderGameOver();
+}
+
+function renderPlayAreaAssessment() {
+  const el = $("play-area-assessment");
+  if (!el || !playAreaAssessment || currentState.phase === "lobby") {
+    el?.classList.add("hidden");
+    return;
+  }
+
+  const isOrganizer = me.role === "organizer";
+  if (!devMode && !isOrganizer) {
+    el.classList.add("hidden");
+    return;
+  }
+
+  const a = playAreaAssessment;
+  el.classList.remove("hidden", "too_small", "tight", "balanced", "large", "too_large");
+  el.classList.add(a.verdict);
+
+  const km = (a.radiusM / 1000).toFixed(2);
+  const recKm = (a.recommendedRadiusM / 1000).toFixed(2);
+  el.innerHTML = `
+    <div class="assessment-title">Zone : ${a.verdictLabelFr} (${km} km)</div>
+    <div class="assessment-metrics">
+      Traversée ~${a.walkCrossingMin} min à pied · ~${a.jogCrossingMin} min en courant<br>
+      ${a.copCount} flic${a.copCount > 1 ? "s" : ""} · ${a.areaPerCopKm2} km²/flic · marge fugitive ${a.evasionMarginM} m<br>
+      Plage équilibrée : ${(a.balancedMinM / 1000).toFixed(2)}–${(a.balancedMaxM / 1000).toFixed(2)} km · cible ${recKm} km
+    </div>
+    <div class="assessment-hint">${escapeHtml(a.hintFr)}</div>`;
+}
+
+function renderPlayAreaControls(context) {
+  const isOrganizer = me?.role === "organizer";
+  const phase = currentState?.phase ?? "lobby";
+
+  const lobbyEl = $("lobby-play-area-controls");
+  const gameEl = $("game-play-area-controls");
+  const devEl = $("dev-play-area-controls");
+  const optionsEl = $("organizer-options");
+
+  if (context === "lobby") {
+    if (!lobbyEl || !isOrganizer || phase !== "lobby" || !playAreaRadius) {
+      lobbyEl?.replaceChildren();
+      return;
+    }
+    mountPlayAreaControls(lobbyEl, playAreaRadius, false);
+    return;
+  }
+
+  const inGame = phase === "rally" || phase === "active";
+  if (!isOrganizer || !inGame || !playAreaRadius) {
+    optionsEl?.classList.add("hidden");
+    devEl?.classList.add("hidden");
+    gameEl?.replaceChildren();
+    devEl?.replaceChildren();
+    return;
+  }
+
+  if (devMode) {
+    optionsEl?.classList.add("hidden");
+    devEl?.classList.remove("hidden");
+    mountPlayAreaControls(devEl, playAreaRadius, true);
+    gameEl?.replaceChildren();
+  } else {
+    optionsEl?.classList.remove("hidden");
+    devEl?.classList.add("hidden");
+    devEl?.replaceChildren();
+    mountPlayAreaControls(gameEl, playAreaRadius, false);
+  }
+}
+
+function mountPlayAreaControls(container, info, compact) {
+  if (!container || radiusSliderDragging) return;
+
+  const km = (info.currentM / 1000).toFixed(2);
+  const autoLabel = info.isAuto ? " (auto)" : "";
+  container.innerHTML = `
+    ${compact ? '<span class="dev-label">Zone</span>' : ""}
+    <label>
+      <span>Rayon de la zone</span>
+      <span class="radius-value">${km} km${autoLabel}</span>
+    </label>
+    <input type="range" min="${info.minM}" max="${info.maxM}" step="${info.stepM}" value="${info.currentM}" />
+    <div class="play-area-presets">
+      <button type="button" class="btn btn-secondary btn-sm preset-auto${info.isAuto ? " active" : ""}">Auto</button>
+      <button type="button" class="btn btn-secondary btn-sm preset-tight">Compacte</button>
+      <button type="button" class="btn btn-secondary btn-sm preset-balanced">Équilibrée</button>
+    </div>`;
+
+  const slider = container.querySelector('input[type="range"]');
+  const valueEl = container.querySelector(".radius-value");
+
+  slider.addEventListener("pointerdown", () => { radiusSliderDragging = true; });
+  slider.addEventListener("pointerup", () => { radiusSliderDragging = false; });
+  slider.addEventListener("input", () => {
+    valueEl.textContent = `${(Number(slider.value) / 1000).toFixed(2)} km`;
+  });
+  slider.addEventListener("change", () => {
+    radiusSliderDragging = false;
+    sendPlayAreaRadius(Number(slider.value));
+  });
+
+  container.querySelector(".preset-auto")?.addEventListener("click", () => sendPlayAreaRadius(null));
+  container.querySelector(".preset-tight")?.addEventListener("click", () => sendPlayAreaRadius(info.presets.tightM));
+  container.querySelector(".preset-balanced")?.addEventListener("click", () => sendPlayAreaRadius(info.presets.balancedM));
+
+  if (compact) container.classList.add("play-area-controls-compact");
+}
+
+function sendPlayAreaRadius(radiusM) {
+  if (!roomId || me?.role !== "organizer") return;
+  ws.send(JSON.stringify({ type: "set_play_area_radius", roomId, by: myId, radiusM }));
+}
+
+function renderGameStart() {
+  const overlay = $("game-start-overlay");
+  if (!overlay) return;
+
+  const phase = currentState.phase;
+  if (phase === "finished") {
+    overlay.classList.add("hidden");
+    lastRenderedPhase = phase;
+    return;
+  }
+
+  if (phase === "active" && lastRenderedPhase && lastRenderedPhase !== "active") {
+    showGameStartOverlay();
+  }
+  lastRenderedPhase = phase;
+}
+
+function showGameStartOverlay() {
+  const overlay = $("game-start-overlay");
+  const isFugitive = currentState.fugitiveId === myId;
+
+  overlay.classList.remove("hidden", "cops-win", "fugitive-win");
+  overlay.classList.add(isFugitive ? "fugitive-win" : "cops-win");
+
+  $("game-start-headline").textContent = "La chasse commence !";
+  $("game-start-detail").textContent = isFugitive
+    ? "Accomplissez vos 3 missions sans vous faire arrêter"
+    : "Arrêtez le fugitif avant la fin du temps";
+  $("game-start-outcome").textContent = isFugitive ? "Fuyez !" : "Attrapez-le !";
+
+  clearTimeout(startOverlayTimer);
+  startOverlayTimer = setTimeout(() => overlay.classList.add("hidden"), 4500);
 }
 
 function renderGameOver() {
@@ -282,6 +446,8 @@ function renderGameOver() {
     overlay.classList.remove("cops-win", "fugitive-win", "player-win", "player-lose");
     return;
   }
+
+  $("game-start-overlay")?.classList.add("hidden");
 
   const isFugitive = currentState.fugitiveId === myId;
   const fugitiveEscaped = currentState.winner === "fugitive";
@@ -322,6 +488,13 @@ function renderGameActions(eligibility) {
     wrap.appendChild(actionBtn("Lancer la chasse", "btn-primary", () => {
       ws.send(JSON.stringify({ type: "start_chase", roomId, by: myId }));
     }, !eligibility.ok));
+    if (!eligibility.ok) {
+      const forceBtn = actionBtn("Forcer le lancement", "btn-secondary", () => {
+        ws.send(JSON.stringify({ type: "start_chase", roomId, by: myId, force: true }));
+      });
+      forceBtn.title = "Démarrer même si tous les joueurs ne sont pas en position";
+      wrap.appendChild(forceBtn);
+    }
   }
 
   if (phase === "active") {
@@ -377,6 +550,8 @@ function renderGameActions(eligibility) {
 
 function renderMapLayers() {
   if (!mapReady) return;
+
+  renderPlayAreaBoundary();
 
   const phase = currentState.phase;
   const isFugitive = currentState.fugitiveId === myId;
@@ -480,6 +655,9 @@ function ensureMap() {
   }).addTo(map);
   map.setView([48.8566, 2.3522], 14);
   mapReady = true;
+  map.on("zoomend moveend", () => {
+    if (boundaryMaskLayer) applyHatchFill(boundaryMaskLayer);
+  });
 
   if (devMode && !mapClickBound) {
     map.on("click", (e) => {
@@ -754,6 +932,135 @@ function setCopDotMarker(existing, lat, lng) {
   }).addTo(map);
 }
 
+function renderPlayAreaBoundary() {
+  const area = currentState?.playArea;
+  const visible = area?.center?.lat && area.radiusM && currentState.phase !== "lobby";
+  if (!visible) {
+    removeBoundaryLayers();
+    return;
+  }
+
+  ensureMapHatchPattern();
+
+  const { center, radiusM } = area;
+  const latDelta = (radiusM * 2.8) / 111320;
+  const lngDelta = latDelta / Math.max(Math.cos((center.lat * Math.PI) / 180), 0.2);
+  const outerRing = [
+    [center.lat - latDelta, center.lng - lngDelta],
+    [center.lat - latDelta, center.lng + lngDelta],
+    [center.lat + latDelta, center.lng + lngDelta],
+    [center.lat + latDelta, center.lng - lngDelta]
+  ];
+  const innerRing = circleLatLngRing(center, radiusM).reverse();
+
+  if (!boundaryMaskLayer) {
+    boundaryMaskLayer = L.polygon([outerRing, innerRing], {
+      stroke: false,
+      fill: true,
+      fillColor: "#0b0f14",
+      fillOpacity: 0.72,
+      interactive: false
+    }).addTo(map);
+    boundaryMaskLayer.bringToBack();
+  } else {
+    boundaryMaskLayer.setLatLngs([outerRing, innerRing]);
+    boundaryMaskLayer.bringToBack();
+  }
+  applyHatchFill(boundaryMaskLayer);
+
+  if (!boundaryBorderLayer) {
+    boundaryBorderLayer = L.circle([center.lat, center.lng], {
+      radius: radiusM,
+      color: "#4ade80",
+      weight: 2.5,
+      opacity: 0.95,
+      dashArray: "10 8",
+      fill: false,
+      interactive: false
+    }).addTo(map);
+  } else {
+    boundaryBorderLayer.setLatLng([center.lat, center.lng]);
+    boundaryBorderLayer.setRadius(radiusM);
+  }
+}
+
+function removeBoundaryLayers() {
+  if (boundaryMaskLayer) {
+    map.removeLayer(boundaryMaskLayer);
+    boundaryMaskLayer = null;
+  }
+  if (boundaryBorderLayer) {
+    map.removeLayer(boundaryBorderLayer);
+    boundaryBorderLayer = null;
+  }
+}
+
+function ensureMapHatchPattern() {
+  if (!map || map._sanchaseHatchReady) return;
+  const svg = map.getPanes().overlayPane?.querySelector("svg");
+  if (!svg) return;
+
+  let defs = svg.querySelector("defs");
+  if (!defs) {
+    defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    svg.insertBefore(defs, svg.firstChild);
+  }
+  if (svg.querySelector("#sanchase-hatch")) {
+    map._sanchaseHatchReady = true;
+    return;
+  }
+
+  const pattern = document.createElementNS("http://www.w3.org/2000/svg", "pattern");
+  pattern.setAttribute("id", "sanchase-hatch");
+  pattern.setAttribute("width", "12");
+  pattern.setAttribute("height", "12");
+  pattern.setAttribute("patternUnits", "userSpaceOnUse");
+  pattern.setAttribute("patternTransform", "rotate(45)");
+
+  const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  bg.setAttribute("width", "12");
+  bg.setAttribute("height", "12");
+  bg.setAttribute("fill", "rgba(11, 15, 20, 0.82)");
+
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", "0");
+  line.setAttribute("y1", "0");
+  line.setAttribute("x2", "0");
+  line.setAttribute("y2", "12");
+  line.setAttribute("stroke", "#64748b");
+  line.setAttribute("stroke-width", "2");
+
+  pattern.appendChild(bg);
+  pattern.appendChild(line);
+  defs.appendChild(pattern);
+  map._sanchaseHatchReady = true;
+}
+
+function applyHatchFill(layer) {
+  requestAnimationFrame(() => {
+    const path = layer.getElement?.();
+    if (!path) return;
+    path.setAttribute("fill", "url(#sanchase-hatch)");
+    path.setAttribute("fill-opacity", "0.88");
+  });
+}
+
+function circleLatLngRing(center, radiusM, steps = 64) {
+  const ring = [];
+  for (let i = 0; i < steps; i++) {
+    const bearing = (2 * Math.PI * i) / steps;
+    const p = offsetMetersClient(center, radiusM, bearing);
+    ring.push([p.lat, p.lng]);
+  }
+  return ring;
+}
+
+function offsetMetersClient(origin, meters, bearingRad) {
+  const dLat = (meters * Math.cos(bearingRad)) / 111320;
+  const dLng = (meters * Math.sin(bearingRad)) / (111320 * Math.cos((origin.lat * Math.PI) / 180));
+  return { lat: origin.lat + dLat, lng: origin.lng + dLng };
+}
+
 function haversineMeters(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const toRad = (d) => (d * Math.PI) / 180;
@@ -832,6 +1139,11 @@ function getWebSocketUrl() {
   const explicitWs = new URLSearchParams(window.location.search).get("ws");
   if (explicitWs) return explicitWs;
   const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+  const devWebPort = window.location.port;
+  // HTTPS or standard ports: WebSocket is on same host at /ws (tunnel gateway).
+  if (window.location.protocol === "https:" || devWebPort === "" || devWebPort === "80" || devWebPort === "443") {
+    return `${wsProtocol}://${window.location.host}/ws`;
+  }
   return `${wsProtocol}://${window.location.hostname}:8787/ws`;
 }
 

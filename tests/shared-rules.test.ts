@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { attemptArrest, canStartChase, canStartGame, completeMissionHold, createInitialState, rallyProgress, startMissionHold, useCopScan } from "../packages/shared/src/index.js";
+import { RoomManager } from "../services/game-server/src/room-manager.js";
+import { attemptArrest, assignRallyPoints, canStartChase, canStartGame, completeMissionHold, computePlayAreaRadiusM, createInitialState, rallyProgress, startMissionHold, useCopScan } from "../packages/shared/src/index.js";
 
 describe("shared rules", () => {
   it("requires min players and ready", () => {
@@ -29,6 +30,31 @@ describe("shared rules", () => {
     state.players.b = { id: "b", name: "B", role: "hunter", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestAttemptsUsed: 0, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
     expect(rallyProgress(state)).toEqual({ reached: 1, total: 2 });
     expect(canStartChase(state).reason).toMatch(/1\/2.*il en manque 1/);
+  });
+
+  it("allows forced chase start when players are missing", () => {
+    const manager = new RoomManager();
+    manager.createRoom("force1", "org1", "Org", { minPlayersToStart: 2 });
+    manager.join("force1", "hun1", "Hun");
+    manager.updateLocation("force1", "org1", { lat: 48.85, lng: 2.35, accuracyM: 10, ts: 1 });
+    manager.setReady("force1", "org1", true);
+    manager.setReady("force1", "hun1", true);
+    manager.startGame("force1", "org1");
+    expect(canStartChase(manager.get("force1")!.state).ok).toBe(false);
+    manager.startChase("force1", "org1", true);
+    expect(manager.get("force1")?.state.phase).toBe("active");
+  });
+
+  it("scales play area with player count", () => {
+    expect(computePlayAreaRadiusM(6)).toBe(1322);
+    expect(computePlayAreaRadiusM(12)).toBe(1240);
+
+    const state = createInitialState("roomx");
+    state.players.a = { id: "a", name: "A", role: "hunter", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestAttemptsUsed: 0, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
+    state.players.b = { id: "b", name: "B", role: "hunter", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestAttemptsUsed: 0, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
+    assignRallyPoints(state, { lat: 48.85, lng: 2.35, accuracyM: 10, ts: 1 });
+    expect(state.playArea?.radiusM).toBe(1486);
+    expect(state.playArea?.center.lat).toBe(48.85);
   });
 
   it("allows fugitive to scan cops twice for three minutes", () => {

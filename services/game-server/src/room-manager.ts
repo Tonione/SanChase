@@ -13,10 +13,13 @@ import {
   canStartGame,
   clampLocation,
   completeMissionHold,
+  constrainLocation,
   createInitialState,
+  computePlayAreaRadiusM,
   enableNextDecoyReveal,
   markRallyReached,
   revealPositions,
+  setPlayAreaRadius,
   startMissionHold,
   cancelMissionHold,
   tickState,
@@ -92,14 +95,18 @@ export class RoomManager {
     return room;
   }
 
-  startChase(roomId: string, by: string) {
+  startChase(roomId: string, by: string, force = false) {
     const room = this.requireRoom(roomId);
     const starter = room.state.players[by];
     if (!starter || starter.role !== "organizer") throw new Error("only organizer can force chase start");
+    if (!force) {
+      const gate = canStartChase(room.state);
+      if (!gate.ok) throw new Error(gate.reason);
+    }
     room.state.phase = "active";
     room.state.nextRevealTick = room.state.tick + 7 * 60;
     assignFugitiveMissions(room.state);
-    room.state.eventLog.push(`${Date.now()}:system:chase_started`);
+    room.state.eventLog.push(`${Date.now()}:system:${force ? "chase_forced" : "chase_started"}`);
     return room;
   }
 
@@ -112,7 +119,7 @@ export class RoomManager {
     const room = this.requireRoom(roomId);
     const player = room.state.players[playerId];
     if (!player) throw new Error("player not found");
-    player.lastLocation = simulated ? location : clampLocation(player.lastLocation, location);
+    player.lastLocation = simulated ? location : constrainLocation(room.state, player.lastLocation, location);
     if (room.state.phase === "rally") markRallyReached(room.state, playerId);
     return room;
   }
@@ -150,6 +157,17 @@ export class RoomManager {
   useCopScan(roomId: string, by: string) {
     const room = this.requireRoom(roomId);
     useCopScan(room.state, by);
+    return room;
+  }
+
+  setPlayAreaRadius(roomId: string, by: string, radiusM: number | null) {
+    const room = this.requireRoom(roomId);
+    const organizer = room.state.players[by];
+    if (!organizer || organizer.role !== "organizer") throw new Error("only organizer can set play area radius");
+    if (!["lobby", "rally", "active"].includes(room.state.phase)) {
+      throw new Error("cannot change play area radius now");
+    }
+    setPlayAreaRadius(room.state, radiusM);
     return room;
   }
 

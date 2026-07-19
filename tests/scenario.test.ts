@@ -14,7 +14,7 @@ describe("scenario: fugitive mission win", () => {
     manager.setReady("birthd", "org1", true);
     manager.setReady("birthd", "hun1", true);
     manager.startGame("birthd", "org1");
-    manager.startChase("birthd", "org1");
+    manager.startChase("birthd", "org1", true);
 
     const room = manager.get("birthd");
     if (!room) throw new Error("room missing");
@@ -44,7 +44,7 @@ describe("scenario: fugitive mission win", () => {
     manager.setReady("arrst1", "org1", true);
     manager.setReady("arrst1", "cop11", true);
     manager.startGame("arrst1", "org1");
-    manager.startChase("arrst1", "org1");
+    manager.startChase("arrst1", "org1", true);
     const out = manager.attemptArrest("arrst1", "cop11");
 
     expect(out.result.success).toBe(true);

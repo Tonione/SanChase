@@ -1,4 +1,5 @@
-import { ActionEvent, DEFAULT_COOLDOWN_SEC, DEFAULT_SETTINGS, GameState, Coordinates, Mission, RoomSettings } from "./domain.js";
+import { ActionEvent, DEFAULT_COOLDOWN_SEC, DEFAULT_SETTINGS, GameState, Coordinates, Mission, PlayArea, RoomSettings } from "./domain.js";
+import { computeMinPlayAreaRadiusM, computeRecommendedPlayAreaRadiusM } from "./play-area-assessment.js";
 
 const REVEAL_INTERVAL_SEC = 7 * 60;
 const REVEAL_DURATION_SEC = 20;
@@ -10,6 +11,12 @@ export const DEV_MISSION_HOLD_SEC = 5;
 export const MISSION_HIT_RADIUS_M = MISSION_HIT_M;
 export const COP_SCAN_DURATION_SEC = 180;
 export const MAX_COP_SCAN_USES = 2;
+
+const PLAY_AREA_MIN_M = 650;
+const PLAY_AREA_MAX_M = 2200;
+const PLAY_AREA_STEP_M = 50;
+
+export { PLAY_AREA_MIN_M, PLAY_AREA_MAX_M, PLAY_AREA_STEP_M };
 
 export const MISSION_NAMES = [
   "Déposer un colis mort",
@@ -51,6 +58,7 @@ export function createInitialState(roomId: string, settings: Partial<RoomSetting
     settings: merged,
     players: {},
     fugitiveId: null,
+    playArea: null,
     rallyPoints: {},
     missions: [],
     revealUntilTick: 0,
@@ -112,14 +120,103 @@ export function canStartChase(state: GameState): { ok: boolean; reason: string }
   return { ok: true, reason: `Tous les joueurs (${total}) sont en place — prêt à chasser !` };
 }
 
+export function clampPlayAreaRadiusM(radiusM: number): number {
+  return Math.min(PLAY_AREA_MAX_M, Math.max(PLAY_AREA_MIN_M, Math.round(radiusM)));
+}
+
+export function resolvePlayAreaRadiusM(state: GameState): number {
+  if (state.settings.playAreaRadiusM != null) {
+    return clampPlayAreaRadiusM(state.settings.playAreaRadiusM);
+  }
+  return computePlayAreaRadiusM(Object.keys(state.players).length, state.settings.boundaryPreset);
+}
+
+export function computePlayAreaRadiusM(playerCount: number, preset: RoomSettings["boundaryPreset"] = "district_medium"): number {
+  const recommended = computeRecommendedPlayAreaRadiusM(playerCount, preset);
+  return clampPlayAreaRadiusM(recommended);
+}
+
+export function playAreaRadiusInfo(state: GameState) {
+  const playerCount = Math.max(Object.keys(state.players).length, 1);
+  const defaultM = computePlayAreaRadiusM(playerCount, state.settings.boundaryPreset);
+  const minGeometryM = computeMinPlayAreaRadiusM();
+  const recommendedM = computeRecommendedPlayAreaRadiusM(playerCount, state.settings.boundaryPreset);
+  const currentM = state.playArea?.radiusM ?? state.settings.playAreaRadiusM ?? defaultM;
+  return {
+    minM: PLAY_AREA_MIN_M,
+    maxM: PLAY_AREA_MAX_M,
+    stepM: PLAY_AREA_STEP_M,
+    defaultM,
+    currentM: clampPlayAreaRadiusM(currentM),
+    isAuto: state.settings.playAreaRadiusM == null,
+    presets: {
+      tightM: clampPlayAreaRadiusM(Math.round(minGeometryM * 1.1)),
+      balancedM: clampPlayAreaRadiusM(recommendedM),
+      recommendedM: clampPlayAreaRadiusM(recommendedM)
+    }
+  };
+}
+
+export function setPlayAreaRadius(state: GameState, radiusM: number | null): void {
+  if (state.phase === "finished") throw new Error("Impossible de modifier la zone après la partie");
+
+  if (radiusM == null) {
+    delete state.settings.playAreaRadiusM;
+  } else {
+    state.settings.playAreaRadiusM = clampPlayAreaRadiusM(radiusM);
+  }
+
+  const resolved = resolvePlayAreaRadiusM(state);
+  if (state.playArea) {
+    state.playArea = { ...state.playArea, radiusM: resolved };
+    for (const player of Object.values(state.players)) {
+      if (player.lastLocation) {
+        player.lastLocation = clampToPlayArea(state.playArea, player.lastLocation);
+      }
+    }
+    for (const mission of state.missions) {
+      if (mission.point.lat) {
+        mission.point = clampToPlayArea(state.playArea, mission.point);
+      }
+    }
+  }
+
+  state.eventLog.push(`${Date.now()}:system:play_area_radius:${resolved}`);
+}
+
 export function assignRallyPoints(state: GameState, center: Coordinates) {
   const ids = Object.keys(state.players);
+  const radiusM = resolvePlayAreaRadiusM(state);
+  state.playArea = {
+    center: { ...center, accuracyM: center.accuracyM, ts: center.ts },
+    radiusM
+  };
   state.rallyPoints = {};
   ids.forEach((id, index) => {
     const bearing = (2 * Math.PI * index) / Math.max(ids.length, 1);
     const point = offsetMeters(center, RALLY_RADIUS_M, bearing);
     state.rallyPoints[id] = { ...point, accuracyM: 10, ts: Date.now() };
   });
+}
+
+export function clampToPlayArea(area: PlayArea, location: Coordinates): Coordinates {
+  const dist = haversineMeters(area.center.lat, area.center.lng, location.lat, location.lng);
+  if (dist <= area.radiusM) return location;
+  const bearing = Math.atan2(
+    (location.lng - area.center.lng) * Math.cos((area.center.lat * Math.PI) / 180),
+    location.lat - area.center.lat
+  );
+  const insetM = Math.max(area.radiusM - 8, area.radiusM * 0.98);
+  const edge = offsetMeters(area.center, insetM, bearing);
+  return { ...edge, accuracyM: location.accuracyM, ts: location.ts };
+}
+
+export function constrainLocation(state: GameState, previous: Coordinates | null, next: Coordinates): Coordinates | null {
+  let loc = next;
+  if (state.playArea && (state.phase === "rally" || state.phase === "active")) {
+    loc = clampToPlayArea(state.playArea, loc);
+  }
+  return clampLocation(previous, loc);
 }
 
 export function assignFugitiveMissions(state: GameState) {
@@ -134,10 +231,12 @@ export function assignFugitiveMissions(state: GameState) {
     const bearing = ((Math.PI * 2) / 3) * i + Math.random() * 0.2;
     const distance = 350 + i * 220;
     const point = offsetMeters(base, distance, bearing);
+    const raw = { ...point, accuracyM: 10, ts: Date.now() };
+    const placed = state.playArea ? clampToPlayArea(state.playArea, raw) : raw;
     return {
       id: `m${i + 1}`,
       name: names[i],
-      point: { ...point, accuracyM: 10, ts: Date.now() },
+      point: placed,
       completed: false,
       holdStartTick: null
     } as Mission;
