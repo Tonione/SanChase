@@ -29,7 +29,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+log_status() {
+  printf '%s\n' "$*" >&2
+}
+
 stop_stale_sanchase() {
+  pkill -f "cloudflared tunnel --url http://127.0.0.1:$GATEWAY_PORT" 2>/dev/null || true
   for port in "$API_PORT" "$GATEWAY_PORT"; do
     local pids
     pids=$(lsof -ti "tcp:$port" 2>/dev/null || true)
@@ -50,33 +55,45 @@ stop_stale_sanchase() {
 
 wait_for_tunnel_url() {
   local log_file="$1"
+  local url=""
+  log_status "  Waiting for Cloudflare URL (usually 5–15 s)..."
   local i=0
   while [[ $i -lt 90 ]]; do
-    if grep -qE 'https://[a-z0-9-]+\.trycloudflare\.com' "$log_file" 2>/dev/null; then
-      grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$log_file" | tail -1
+    url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$log_file" 2>/dev/null | tail -1 || true)"
+    if [[ -n "$url" ]]; then
+      printf '%s\n' "$url"
       return 0
+    fi
+    if grep -qiE ' ERR ' "$log_file" 2>/dev/null; then
+      log_status "Cloudflare tunnel failed. See $log_file"
+      tail -25 "$log_file" >&2 || true
+      return 1
     fi
     sleep 1
     i=$((i + 1))
+    if (( i % 5 == 0 )); then
+      log_status "  …still waiting ($i s)"
+    fi
   done
-  echo "Timed out waiting for tunnel URL. Log:" >&2
-  tail -20 "$log_file" >&2 || true
+  log_status "Timed out waiting for tunnel URL. Log: $log_file"
+  tail -25 "$log_file" >&2 || true
   return 1
 }
 
 wait_for_tunnel_ready() {
   local url="$1"
+  log_status "  Checking tunnel responds (up to 15 s)..."
   local i=0
-  while [[ $i -lt 45 ]]; do
-    if curl -sf "$url/health" >/dev/null 2>&1; then
+  while [[ $i -lt 15 ]]; do
+    if curl -sf --connect-timeout 3 --max-time 5 "$url/health" >/dev/null 2>&1; then
+      log_status "  Tunnel is ready."
       return 0
     fi
     sleep 1
     i=$((i + 1))
   done
-  echo "Tunnel URL appeared but is not reachable yet: $url" >&2
-  tail -20 "$LOG_DIR/tunnel.log" >&2 || true
-  return 1
+  log_status "  Tunnel URL is live but still warming up — open it now if needed."
+  return 0
 }
 
 stop_stale_sanchase
@@ -116,10 +133,12 @@ if ! curl -sf "http://127.0.0.1:$GATEWAY_PORT/health" >/dev/null 2>&1; then
 fi
 
 echo "Opening Cloudflare tunnel..."
+log_status "  Logs: $LOG_DIR"
 cloudflared tunnel --url "http://127.0.0.1:$GATEWAY_PORT" >"$LOG_DIR/tunnel.log" 2>&1 &
 TUNNEL_PID=$!
 GAME_URL="$(wait_for_tunnel_url "$LOG_DIR/tunnel.log")"
-wait_for_tunnel_ready "$GAME_URL"
+wait_for_tunnel_ready "$GAME_URL" || true
+log_status "  Share link:"
 
 bash "$ROOT/scripts/mac/notify-link.sh" "$GAME_URL" || true
 
