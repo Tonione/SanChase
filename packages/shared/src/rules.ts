@@ -1,6 +1,7 @@
 import { ActionEvent, DEFAULT_COOLDOWN_SEC, DEFAULT_SETTINGS, GameState, Coordinates, Mission, PlayArea, RoomSettings } from "./domain.js";
 import {
   clampPlayAreaRadiusM,
+  computeMinPlayAreaRadiusM,
   missionDistancesM,
   PLAY_AREA_HIDE_SEEK_RADIUS_M,
   PLAY_AREA_MAX_M,
@@ -10,7 +11,7 @@ import {
   rallyHitRadiusM,
   rallySpreadM
 } from "./play-area-layout.js";
-import { computeMinPlayAreaRadiusM, computeRecommendedPlayAreaRadiusM } from "./play-area-assessment.js";
+import { computeRecommendedPlayAreaRadiusM } from "./play-area-assessment.js";
 
 const REVEAL_INTERVAL_URBAN_SEC = 7 * 60;
 const REVEAL_INTERVAL_MICRO_SEC = 2 * 60;
