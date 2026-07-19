@@ -9,8 +9,10 @@ import {
   assignFugitiveMissions,
   assignRallyPoints,
   attemptArrest,
+  beginPlayAreaSetup,
   canStartChase,
   canStartGame,
+  confirmPlayAreaSetup,
   clampLocation,
   completeMissionHold,
   computePlayAreaRadiusM,
@@ -20,6 +22,7 @@ import {
   markRallyReached,
   revealIntervalSec,
   revealPositions,
+  setPlayAreaCenter,
   setPlayAreaRadius,
   startMissionHold,
   cancelMissionHold,
@@ -90,11 +93,27 @@ export class RoomManager {
       if (room.state.settings.fugitiveSelection === "manual") throw new Error("select fugitive first");
       room.state.fugitiveId = this.pickRandomPlayerId(room.state);
     }
-    room.state.phase = "rally";
+    room.state.phase = "setup";
     const center = room.state.players[by].lastLocation;
     if (!center) throw new Error("organizer location required before launch");
-    assignRallyPoints(room.state, center);
-    room.state.eventLog.push(`${Date.now()}:system:rally_started`);
+    beginPlayAreaSetup(room.state, center);
+    room.state.eventLog.push(`${Date.now()}:system:setup_started`);
+    return room;
+  }
+
+  confirmSetup(roomId: string, by: string) {
+    const room = this.requireRoom(roomId);
+    const organizer = room.state.players[by];
+    if (!organizer || organizer.role !== "organizer") throw new Error("only organizer can confirm setup");
+    confirmPlayAreaSetup(room.state);
+    return room;
+  }
+
+  setPlayAreaCenter(roomId: string, by: string, lat: number, lng: number) {
+    const room = this.requireRoom(roomId);
+    const organizer = room.state.players[by];
+    if (!organizer || organizer.role !== "organizer") throw new Error("only organizer can set play area center");
+    setPlayAreaCenter(room.state, lat, lng);
     return room;
   }
 
@@ -171,7 +190,7 @@ export class RoomManager {
     const room = this.requireRoom(roomId);
     const organizer = room.state.players[by];
     if (!organizer || organizer.role !== "organizer") throw new Error("only organizer can set play area radius");
-    if (!["lobby", "rally", "active"].includes(room.state.phase)) {
+    if (!["lobby", "setup", "rally", "active"].includes(room.state.phase)) {
       throw new Error("cannot change play area radius now");
     }
     setPlayAreaRadius(room.state, radiusM);

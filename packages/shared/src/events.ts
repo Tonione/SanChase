@@ -25,6 +25,8 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("set_ready"), roomId: z.string(), playerId: z.string(), ready: z.boolean() }),
   z.object({ type: z.literal("select_fugitive"), roomId: z.string(), by: z.string(), fugitiveId: z.string() }),
   z.object({ type: z.literal("start_game"), roomId: z.string(), by: z.string() }),
+  z.object({ type: z.literal("confirm_setup"), roomId: z.string(), by: z.string() }),
+  z.object({ type: z.literal("set_play_area_center"), roomId: z.string(), by: z.string(), lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }),
   z.object({ type: z.literal("start_chase"), roomId: z.string(), by: z.string(), force: z.boolean().optional() }),
   z.object({ type: z.literal("use_cop_scan"), roomId: z.string(), by: z.string() }),
   z.object({ type: z.literal("use_decoy_reveal"), roomId: z.string(), by: z.string() }),

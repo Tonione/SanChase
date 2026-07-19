@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RoomManager } from "../services/game-server/src/room-manager.js";
-import { attemptArrest, assignRallyPoints, canStartChase, canStartGame, completeMissionHold, computePlayAreaRadiusM, createInitialState, rallyProgress, startMissionHold, tickState, updateArrestStillness, useCopScan } from "../packages/shared/src/index.js";
+import { attemptArrest, assignRallyPoints, beginPlayAreaSetup, canStartChase, canStartGame, completeMissionHold, computePlayAreaRadiusM, confirmPlayAreaSetup, createInitialState, rallyProgress, setPlayAreaCenter, startMissionHold, tickState, updateArrestStillness, useCopScan } from "../packages/shared/src/index.js";
 
 describe("shared rules", () => {
   it("requires min players and ready", () => {
@@ -42,9 +42,25 @@ describe("shared rules", () => {
     manager.setReady("force1", "org1", true);
     manager.setReady("force1", "hun1", true);
     manager.startGame("force1", "org1");
+    expect(manager.get("force1")?.state.phase).toBe("setup");
+    manager.confirmSetup("force1", "org1");
     expect(canStartChase(manager.get("force1")!.state).ok).toBe(false);
     manager.startChase("force1", "org1", true);
     expect(manager.get("force1")?.state.phase).toBe("active");
+  });
+
+  it("lets organizer adjust play area during setup before rally", () => {
+    const state = createInitialState("roomx");
+    state.phase = "setup";
+    state.players.org1 = { id: "org1", name: "Org", role: "organizer", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillSinceTick: null, lastLocation: { lat: 48.85, lng: 2.35, accuracyM: 10, ts: 1 }, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
+    state.players.hun1 = { id: "hun1", name: "Hun", role: "hunter", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillSinceTick: null, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
+    beginPlayAreaSetup(state, state.players.org1.lastLocation!);
+    expect(state.rallyPoints).toEqual({});
+    setPlayAreaCenter(state, 48.851, 2.351);
+    expect(state.playArea?.center.lat).toBe(48.851);
+    confirmPlayAreaSetup(state);
+    expect(state.phase).toBe("rally");
+    expect(Object.keys(state.rallyPoints)).toEqual(["org1", "hun1"]);
   });
 
   it("scales play area with player count", () => {

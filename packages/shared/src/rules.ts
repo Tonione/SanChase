@@ -174,6 +174,42 @@ export function playAreaRadiusInfo(state: GameState) {
   };
 }
 
+export function beginPlayAreaSetup(state: GameState, center: Coordinates): void {
+  const radiusM = resolvePlayAreaRadiusM(state);
+  state.playArea = {
+    center: { ...center, accuracyM: center.accuracyM, ts: center.ts },
+    radiusM
+  };
+  state.rallyPoints = {};
+  for (const player of Object.values(state.players)) {
+    player.reachedRally = false;
+  }
+}
+
+export function setPlayAreaCenter(state: GameState, lat: number, lng: number): void {
+  if (!["setup", "rally"].includes(state.phase)) throw new Error("Impossible de déplacer la zone maintenant");
+  if (!state.playArea) throw new Error("Zone de jeu non définie");
+  const center: Coordinates = {
+    lat,
+    lng,
+    accuracyM: state.playArea.center.accuracyM,
+    ts: Date.now()
+  };
+  if (state.phase === "setup") {
+    state.playArea = { ...state.playArea, center };
+    return;
+  }
+  assignRallyPoints(state, center);
+}
+
+export function confirmPlayAreaSetup(state: GameState): void {
+  if (state.phase !== "setup") throw new Error("La zone n'est pas en préparation");
+  if (!state.playArea?.center) throw new Error("Zone de jeu non définie");
+  assignRallyPoints(state, state.playArea.center);
+  state.phase = "rally";
+  state.eventLog.push(`${Date.now()}:system:rally_started`);
+}
+
 export function setPlayAreaRadius(state: GameState, radiusM: number | null): void {
   if (state.phase === "finished") throw new Error("Impossible de modifier la zone après la partie");
 

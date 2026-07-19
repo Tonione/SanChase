@@ -29,6 +29,8 @@ let startOverlayTimer = null;
 let playAreaAssessment = null;
 let playAreaRadius = null;
 let radiusSliderDragging = false;
+let setupCenterMarker = null;
+let setupMapClickBound = false;
 
 const MISSION_HOLD_SEC = () => (devMode ? 5 : 30);
 const MISSION_HIT_M = 15;
@@ -184,11 +186,47 @@ function render(eligibility) {
   if (phase === "lobby") {
     showScreen("lobby");
     renderLobby(eligibility);
+  } else if (phase === "setup" && me.role !== "organizer") {
+    showScreen("lobby");
+    renderSetupWaiting();
   } else {
     showScreen("game");
     ensureMap();
     renderGame(eligibility);
   }
+}
+
+function renderSetupWaiting() {
+  $("lobby-room-code").textContent = currentState.roomId;
+  $("lobby-room-name").textContent = currentState.settings.roomName;
+  $("player-count").textContent = String(Object.keys(currentState.players).length);
+
+  $("organizer-panel").classList.add("hidden");
+  $("btn-ready").classList.add("hidden");
+
+  const statusEl = $("lobby-status");
+  statusEl.textContent = "L'organisateur prépare le terrain de jeu";
+  statusEl.className = "status-banner ok";
+
+  const list = $("player-list");
+  list.innerHTML = "";
+  Object.values(currentState.players).forEach((p) => {
+    const li = document.createElement("li");
+    li.className = "player-item";
+    const badges = [];
+    if (p.role === "organizer") badges.push('<span class="badge badge-org">Hôte</span>');
+    if (p.id === currentState.fugitiveId) badges.push('<span class="badge badge-fugitive">Fugitif</span>');
+    badges.push(p.ready
+      ? '<span class="badge badge-ready">Prêt</span>'
+      : '<span class="badge badge-wait">En attente</span>');
+    li.innerHTML = `
+      <div>
+        <div class="player-name">${escapeHtml(p.name)}</div>
+        <div class="player-meta">${formatRoleDisplay(p, currentState.fugitiveId)}</div>
+      </div>
+      <div style="display:flex;gap:6px">${badges.join("")}</div>`;
+    list.appendChild(li);
+  });
 }
 
 function renderLobby(eligibility) {
@@ -199,6 +237,7 @@ function renderLobby(eligibility) {
   const isOrganizer = me.role === "organizer";
   $("organizer-panel").classList.toggle("hidden", !isOrganizer);
   $("btn-start-launch").disabled = !eligibility.ok;
+  $("btn-ready").classList.remove("hidden");
 
   const statusEl = $("lobby-status");
   statusEl.textContent = eligibility.reason;
@@ -255,6 +294,12 @@ function renderGame(eligibility) {
   pill.className = `phase-pill ${phase}`;
 
   $("role-label").textContent = formatRoleDisplay(me, currentState.fugitiveId, true);
+
+  const setupBanner = $("setup-banner");
+  setupBanner.classList.toggle("hidden", phase !== "setup");
+  if (phase === "setup") {
+    setupBanner.innerHTML = "<strong>Préparez le terrain de jeu</strong> — déplacez le centre, ajustez le rayon, puis validez.";
+  }
 
   const rallyBanner = $("rally-banner");
   rallyBanner.classList.toggle("hidden", phase !== "rally");
@@ -372,7 +417,7 @@ function renderPlayAreaControls(context) {
     return;
   }
 
-  const inGame = phase === "rally" || phase === "active";
+  const inGame = phase === "setup" || phase === "rally" || phase === "active";
   if (!isOrganizer || !inGame || !playAreaRadius) {
     optionsEl?.classList.add("hidden");
     devEl?.classList.add("hidden");
@@ -512,6 +557,11 @@ function renderGameOver() {
   $("game-over-outcome").textContent = playerWon ? "Victoire !" : "Défaite !";
 }
 
+function sendPlayAreaCenter(lat, lng) {
+  if (!roomId || me?.role !== "organizer") return;
+  ws.send(JSON.stringify({ type: "set_play_area_center", roomId, by: myId, lat, lng }));
+}
+
 function renderGameActions(eligibility) {
   if (holdTimer) return;
 
@@ -520,6 +570,17 @@ function renderGameActions(eligibility) {
   const phase = currentState.phase;
   const isFugitive = currentState.fugitiveId === myId;
   const isOrganizer = me.role === "organizer";
+
+  if (phase === "setup" && isOrganizer) {
+    wrap.appendChild(actionBtn("Valider la zone", "btn-primary", () => {
+      ws.send(JSON.stringify({ type: "confirm_setup", roomId, by: myId }));
+    }));
+    wrap.appendChild(actionBtn("Centrer sur moi", "btn-secondary", () => {
+      const loc = me.lastLocation ?? getSelfLocation();
+      if (loc) sendPlayAreaCenter(loc.lat, loc.lng);
+      else showToast("Position GPS requise");
+    }));
+  }
 
   if (phase === "rally" && isOrganizer) {
     wrap.appendChild(actionBtn("Lancer la chasse", "btn-primary", () => {
@@ -593,6 +654,12 @@ function renderMapLayers() {
   renderPlayAreaBoundary();
 
   const phase = currentState.phase;
+  if (phase === "setup") {
+    renderSetupMapLayers();
+    return;
+  }
+  clearSetupMapLayers();
+
   const isFugitive = currentState.fugitiveId === myId;
   const scanActive = isCopScanActive(currentState);
 
@@ -685,6 +752,57 @@ function renderMapLayers() {
   }
 }
 
+function renderSetupMapLayers() {
+  if (myMarker) { map.removeLayer(myMarker); myMarker = null; }
+  for (const id of [...markers.keys()]) {
+    map.removeLayer(markers.get(id));
+    markers.delete(id);
+  }
+  if (rallyMarker) { map.removeLayer(rallyMarker); rallyMarker = null; }
+  if (rallyFlagMarker) { map.removeLayer(rallyFlagMarker); rallyFlagMarker = null; }
+
+  const area = currentState.playArea;
+  if (!area?.center?.lat) return;
+
+  const { center } = area;
+  if (!setupCenterMarker) {
+    setupCenterMarker = L.marker([center.lat, center.lng], {
+      icon: emojiIcon("📍"),
+      draggable: true,
+      zIndexOffset: 600
+    }).addTo(map);
+    setupCenterMarker.on("dragend", () => {
+      const pos = setupCenterMarker.getLatLng();
+      sendPlayAreaCenter(pos.lat, pos.lng);
+    });
+  } else {
+    setupCenterMarker.setLatLng([center.lat, center.lng]);
+  }
+
+  if (!setupMapClickBound) {
+    map.on("click", onSetupMapClick);
+    setupMapClickBound = true;
+  }
+
+  map.setView([center.lat, center.lng], mapZoomForRadius(area.radiusM ?? 500));
+}
+
+function onSetupMapClick(ev) {
+  if (currentState?.phase !== "setup" || me?.role !== "organizer") return;
+  sendPlayAreaCenter(ev.latlng.lat, ev.latlng.lng);
+}
+
+function clearSetupMapLayers() {
+  if (setupCenterMarker) {
+    map?.removeLayer(setupCenterMarker);
+    setupCenterMarker = null;
+  }
+  if (setupMapClickBound && map) {
+    map.off("click", onSetupMapClick);
+    setupMapClickBound = false;
+  }
+}
+
 function ensureMap() {
   if (mapReady) {
     setTimeout(() => map.invalidateSize(), 100);
@@ -703,6 +821,7 @@ function ensureMap() {
 
   if (devMode && !mapClickBound) {
     map.on("click", (e) => {
+      if (currentState?.phase === "setup" && me?.role === "organizer") return;
       sendSimLocation(e.latlng.lat, e.latlng.lng);
       showToast(`Téléporté vers ${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`);
     });
@@ -820,7 +939,7 @@ function actionBtn(label, cls, onClick, disabled = false) {
 }
 
 function phaseLabel(phase) {
-  return { lobby: "Salon", rally: "Rassemblement", active: "Chasse", finished: "Terminé" }[phase] ?? phase;
+  return { lobby: "Salon", setup: "Préparation", rally: "Rassemblement", active: "Chasse", finished: "Terminé" }[phase] ?? phase;
 }
 
 function formatRoleDisplay(player, fugitiveId, forSelf = false) {

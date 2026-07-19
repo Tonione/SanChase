@@ -36,6 +36,10 @@ wss.on("connection", (socket) => {
       if (msg.type === "set_ready") return sync(msg.roomId, manager.setReady(msg.roomId, msg.playerId, msg.ready).state);
       if (msg.type === "select_fugitive") return sync(msg.roomId, manager.selectFugitive(msg.roomId, msg.by, msg.fugitiveId).state);
       if (msg.type === "start_game") return sync(msg.roomId, manager.startGame(msg.roomId, msg.by).state);
+      if (msg.type === "confirm_setup") return sync(msg.roomId, manager.confirmSetup(msg.roomId, msg.by).state);
+      if (msg.type === "set_play_area_center") {
+        return sync(msg.roomId, manager.setPlayAreaCenter(msg.roomId, msg.by, msg.lat, msg.lng).state);
+      }
       if (msg.type === "start_chase") return sync(msg.roomId, manager.startChase(msg.roomId, msg.by, msg.force ?? false).state);
       if (msg.type === "use_decoy_reveal") return sync(msg.roomId, manager.useDecoyReveal(msg.roomId, msg.by).state);
       if (msg.type === "use_cop_scan") {
@@ -144,6 +148,14 @@ function sync(roomId: string, state: GameState) {
 }
 
 function sanitizeStateForPlayer(state: GameState, playerId: string): GameState {
+  const player = state.players[playerId];
+  if (state.phase === "setup" && player?.role !== "organizer") {
+    const players = Object.fromEntries(
+      Object.entries(state.players).map(([id, p]) => [id, { ...p, lastLocation: null }])
+    );
+    return { ...state, playArea: null, rallyPoints: {}, players };
+  }
+
   const isFugitive = state.fugitiveId === playerId;
   const hidePositions = state.phase === "rally" || state.phase === "active";
 

@@ -49,7 +49,7 @@ export const PlayerSchema = z.object({
 });
 export type Player = z.infer<typeof PlayerSchema>;
 
-export const GamePhaseSchema = z.enum(["lobby", "rally", "active", "finished"]);
+export const GamePhaseSchema = z.enum(["lobby", "setup", "rally", "active", "finished"]);
 export type GamePhase = z.infer<typeof GamePhaseSchema>;
 
 export const MissionSchema = z.object({
