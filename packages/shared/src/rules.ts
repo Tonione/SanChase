@@ -6,6 +6,33 @@ const RALLY_RADIUS_M = 320;
 const RALLY_HIT_M = 40;
 const MISSION_HIT_M = 15;
 const MISSION_HOLD_SEC = 30;
+export const DEV_MISSION_HOLD_SEC = 5;
+export const MISSION_HIT_RADIUS_M = MISSION_HIT_M;
+export const COP_SCAN_DURATION_SEC = 180;
+export const MAX_COP_SCAN_USES = 2;
+
+export const MISSION_NAMES = [
+  "Déposer un colis mort",
+  "Rencontrer l'informateur",
+  "Échanger la mallette",
+  "Marquer le monument",
+  "Photographier la cible",
+  "Laisser une carte de visite",
+  "Récupérer le paquet",
+  "Neutraliser la caméra",
+  "Semer une fausse piste",
+  "Récupérer le microfilm",
+  "Remplacer le panneau",
+  "Graffiti sur la statue",
+  "Voler le parapluie du maire",
+  "Pirater le parcmètre",
+  "Passer la contrebande",
+  "Falsifier la liste d'invités",
+  "Saboter la fontaine",
+  "Soudoyer le musicien",
+  "Échanger les étiquettes du musée",
+  "Organiser une diversion"
+] as const;
 
 export function createInitialState(roomId: string, settings: Partial<RoomSettings> = {}): GameState {
   const merged: RoomSettings = {
@@ -29,7 +56,10 @@ export function createInitialState(roomId: string, settings: Partial<RoomSetting
     revealUntilTick: 0,
     nextRevealTick: 0,
     decoyNextReveal: false,
+    copScanUntilTick: 0,
     winner: null,
+    endReason: null,
+    arrestedById: null,
     debriefPoint: null,
     eventLog: []
   };
@@ -57,16 +87,29 @@ export function applyAction(state: GameState, evt: ActionEvent): GameState {
 
 export function canStartGame(state: GameState): { ok: boolean; reason: string } {
   const players = Object.values(state.players);
-  if (players.length < state.settings.minPlayersToStart) return { ok: false, reason: `Need at least ${state.settings.minPlayersToStart} players` };
-  if (players.some((p) => !p.ready)) return { ok: false, reason: "All players must be ready" };
-  return { ok: true, reason: "Ready to launch" };
+  if (players.length < state.settings.minPlayersToStart) {
+    return { ok: false, reason: `Il faut au moins ${state.settings.minPlayersToStart} joueurs` };
+  }
+  if (players.some((p) => !p.ready)) return { ok: false, reason: "Tous les joueurs doivent être prêts" };
+  return { ok: true, reason: "Prêt à lancer la partie" };
+}
+
+export function rallyProgress(state: GameState): { reached: number; total: number } {
+  const players = Object.values(state.players);
+  return {
+    reached: players.filter((p) => p.reachedRally).length,
+    total: players.length
+  };
 }
 
 export function canStartChase(state: GameState): { ok: boolean; reason: string } {
-  if (state.phase !== "rally") return { ok: false, reason: "Not in rally phase" };
-  const players = Object.values(state.players);
-  if (players.some((p) => !p.reachedRally)) return { ok: false, reason: "Waiting for players to reach rally points" };
-  return { ok: true, reason: "Chase can start" };
+  if (state.phase !== "rally") return { ok: false, reason: "Pas en phase de rassemblement" };
+  const { reached, total } = rallyProgress(state);
+  const missing = total - reached;
+  if (missing > 0) {
+    return { ok: false, reason: `${reached}/${total} aux positions — il en manque ${missing}` };
+  }
+  return { ok: true, reason: `Tous les joueurs (${total}) sont en place — prêt à chasser !` };
 }
 
 export function assignRallyPoints(state: GameState, center: Coordinates) {
@@ -86,12 +129,29 @@ export function assignFugitiveMissions(state: GameState) {
   if (!fugitive?.lastLocation) throw new Error("fugitive location required for missions");
 
   const base = fugitive.lastLocation;
+  const names = pickMissionNames(3);
   state.missions = [0, 1, 2].map((i) => {
     const bearing = ((Math.PI * 2) / 3) * i + Math.random() * 0.2;
     const distance = 350 + i * 220;
     const point = offsetMeters(base, distance, bearing);
-    return { id: `m${i + 1}`, point: { ...point, accuracyM: 10, ts: Date.now() }, completed: false, holdStartTick: null } as Mission;
+    return {
+      id: `m${i + 1}`,
+      name: names[i],
+      point: { ...point, accuracyM: 10, ts: Date.now() },
+      completed: false,
+      holdStartTick: null
+    } as Mission;
   });
+}
+
+function pickMissionNames(count: number): string[] {
+  const pool = [...MISSION_NAMES];
+  const picked: string[] = [];
+  for (let i = 0; i < count && pool.length; i++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    picked.push(pool.splice(idx, 1)[0]);
+  }
+  return picked;
 }
 
 export function markRallyReached(state: GameState, playerId: string) {
@@ -116,18 +176,24 @@ export function cancelMissionHold(state: GameState, playerId: string, missionId:
   mission.holdStartTick = null;
 }
 
-export function completeMissionHold(state: GameState, playerId: string, missionId: string) {
+export function completeMissionHold(
+  state: GameState,
+  playerId: string,
+  missionId: string,
+  requiredHoldSec: number = MISSION_HOLD_SEC
+) {
   if (state.fugitiveId !== playerId) throw new Error("only fugitive can capture missions");
   const mission = state.missions.find((m) => m.id === missionId);
   if (!mission || mission.completed || mission.holdStartTick === null) throw new Error("mission hold not started");
   if (!isPlayerNearMission(state, playerId, mission)) throw new Error("too far from mission point");
-  if (state.tick - mission.holdStartTick < MISSION_HOLD_SEC) throw new Error("hold duration too short");
+  if (state.tick - mission.holdStartTick < requiredHoldSec) throw new Error("hold duration too short");
   mission.completed = true;
   mission.holdStartTick = null;
   state.eventLog.push(`${Date.now()}:mission:${missionId}:completed`);
   if (state.missions.every((m) => m.completed)) {
     state.phase = "finished";
     state.winner = "fugitive";
+    state.endReason = "missions";
     state.debriefPoint = computeDebriefPoint(state);
     state.eventLog.push(`${Date.now()}:system:fugitive_won`);
   }
@@ -152,6 +218,8 @@ export function attemptArrest(state: GameState, copId: string): { success: boole
   if (success) {
     state.phase = "finished";
     state.winner = "cops";
+    state.endReason = "arrest";
+    state.arrestedById = copId;
     state.debriefPoint = computeDebriefPoint(state);
     state.eventLog.push(`${Date.now()}:arrest:success:by:${copId}`);
   } else {
@@ -167,6 +235,7 @@ export function tickState(state: GameState): GameState {
     if (state.tick >= state.durationSec) {
       state.phase = "finished";
       state.winner = "cops";
+      state.endReason = "timeout";
       state.debriefPoint = computeDebriefPoint(state);
       state.eventLog.push(`${Date.now()}:system:time_up_cops_win`);
     }
@@ -186,6 +255,22 @@ export function revealPositions(state: GameState): Coordinates[] {
   if (!state.decoyNextReveal) return [truth];
   state.decoyNextReveal = false;
   return [truth, jitterPoint(truth, 180), jitterPoint(truth, 260)];
+}
+
+export function isCopScanActive(state: GameState): boolean {
+  return state.phase === "active" && state.tick < state.copScanUntilTick;
+}
+
+export function useCopScan(state: GameState, playerId: string) {
+  if (state.phase !== "active") throw new Error("scan des flics uniquement pendant la chasse");
+  if (state.fugitiveId !== playerId) throw new Error("seul le fugitif peut scanner les flics");
+  const player = state.players[playerId];
+  if (!player) throw new Error("joueur introuvable");
+  if (player.copScanUses >= MAX_COP_SCAN_USES) throw new Error("scan des flics déjà utilisé deux fois");
+  if (isCopScanActive(state)) throw new Error("un scan est déjà actif");
+  player.copScanUses += 1;
+  state.copScanUntilTick = state.tick + COP_SCAN_DURATION_SEC;
+  state.eventLog.push(`${Date.now()}:power:cop_scan:by:${playerId}`);
 }
 
 export function enableNextDecoyReveal(state: GameState, playerId: string) {

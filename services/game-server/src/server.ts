@@ -1,11 +1,12 @@
 import express from "express";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import { ClientMessageSchema, GameState, ServerMessage } from "../../../packages/shared/src/index.js";
+import { ClientMessageSchema, DEV_MISSION_HOLD_SEC, GameState, isCopScanActive, ServerMessage } from "../../../packages/shared/src/index.js";
 import { RoomManager } from "./room-manager.js";
 
 const manager = new RoomManager();
 const socketsByRoom = new Map<string, Map<string, WebSocket>>();
+const isDevServer = process.env.NODE_ENV !== "production";
 
 const app = express();
 app.use(express.json());
@@ -37,19 +38,43 @@ wss.on("connection", (socket) => {
       if (msg.type === "start_game") return sync(msg.roomId, manager.startGame(msg.roomId, msg.by).state);
       if (msg.type === "start_chase") return sync(msg.roomId, manager.startChase(msg.roomId, msg.by).state);
       if (msg.type === "use_decoy_reveal") return sync(msg.roomId, manager.useDecoyReveal(msg.roomId, msg.by).state);
+      if (msg.type === "use_cop_scan") {
+        const room = manager.useCopScan(msg.roomId, msg.by);
+        broadcastToCops(msg.roomId, room.state, {
+          type: "action_event",
+          message: "Le fugitif active un scan — vos positions sont visibles !"
+        });
+        return sync(msg.roomId, room.state);
+      }
       if (msg.type === "attempt_arrest") {
         const { room, result } = manager.attemptArrest(msg.roomId, msg.by);
+        const copName = room.state.players[msg.by]?.name ?? msg.by;
         broadcast(msg.roomId, {
           type: "action_event",
           message: result.success
-            ? `${msg.by} arrested the fugitive. Proceed to debrief point.`
-            : `${msg.by} arrest failed (${result.distanceM.toFixed(1)}m > ${result.thresholdM.toFixed(1)}m).`
+            ? `${copName} a arrêté le fugitif. Rendez-vous au point de debrief.`
+            : `Échec de l'arrestation (${result.distanceM.toFixed(1)} m > ${result.thresholdM.toFixed(1)} m).`
         });
         return sync(msg.roomId, room.state);
       }
       if (msg.type === "start_mission_hold") return sync(msg.roomId, manager.startMissionHold(msg.roomId, msg.by, msg.missionId).state);
       if (msg.type === "cancel_mission_hold") return sync(msg.roomId, manager.cancelMissionHold(msg.roomId, msg.by, msg.missionId).state);
-      if (msg.type === "complete_mission_hold") return sync(msg.roomId, manager.completeMissionHold(msg.roomId, msg.by, msg.missionId).state);
+      if (msg.type === "complete_mission_hold") {
+        const holdSec = isDevServer && msg.devShortHold ? DEV_MISSION_HOLD_SEC : undefined;
+        const room = manager.completeMissionHold(msg.roomId, msg.by, msg.missionId, holdSec);
+        const mission = room.state.missions.find((m) => m.id === msg.missionId);
+        const completedCount = room.state.missions.filter((m) => m.completed).length;
+        const totalCount = room.state.missions.length;
+        if (mission?.completed) {
+          broadcastToCops(msg.roomId, room.state, {
+            type: "mission_completed",
+            missionName: mission.name,
+            completedCount,
+            totalCount
+          });
+        }
+        return sync(msg.roomId, room.state);
+      }
       if (msg.type === "cop_noise_ping") {
         const room = manager.useCopNoisePing(msg.roomId, msg.by);
         const fugitiveId = room.state.fugitiveId;
@@ -59,7 +84,16 @@ wss.on("connection", (socket) => {
         }
         return sync(msg.roomId, room.state);
       }
-      if (msg.type === "location_update") return sync(msg.roomId, manager.updateLocation(msg.roomId, msg.playerId, msg.location).state);
+      if (msg.type === "dev_trigger_reveal") {
+        if (!isDevServer) throw new Error("dev reveal only available in dev mode");
+        const room = manager.get(msg.roomId);
+        if (!room || room.state.phase !== "active") throw new Error("reveal only during active chase");
+        broadcastToCops(msg.roomId, room.state, { type: "reveal_positions", positions: manager.revealPositions(msg.roomId) });
+        return;
+      }
+      if (msg.type === "location_update") {
+        return sync(msg.roomId, manager.updateLocation(msg.roomId, msg.playerId, msg.location, msg.simulated ?? false).state);
+      }
       if (msg.type === "trigger_action") return sync(msg.payload.roomId, manager.triggerAction(msg.payload.roomId, msg.payload).state);
       manager.heartbeat(msg.roomId, msg.playerId);
     } catch (err) {
@@ -90,10 +124,34 @@ function sync(roomId: string, state: GameState) {
 
 function sanitizeStateForPlayer(state: GameState, playerId: string): GameState {
   const isFugitive = state.fugitiveId === playerId;
-  if (isFugitive) return state;
+  const hidePositions = state.phase === "rally" || state.phase === "active";
+
+  if (isFugitive) {
+    if (hidePositions && !(state.phase === "active" && isCopScanActive(state))) {
+      const players = { ...state.players };
+      for (const [id, player] of Object.entries(players)) {
+        if (id !== playerId && id !== state.fugitiveId) {
+          players[id] = { ...player, lastLocation: null };
+        }
+      }
+      return { ...state, players };
+    }
+    return state;
+  }
+
+  const players = { ...state.players };
+  if (hidePositions && state.fugitiveId && players[state.fugitiveId]) {
+    players[state.fugitiveId] = { ...players[state.fugitiveId], lastLocation: null };
+  }
+
   return {
     ...state,
-    missions: state.missions.map((m) => ({ ...m, point: { lat: 0, lng: 0, accuracyM: 0, ts: 0 }, holdStartTick: null }))
+    players,
+    missions: state.missions.map((m) => ({
+      ...m,
+      point: { lat: 0, lng: 0, accuracyM: 0, ts: 0 },
+      holdStartTick: null
+    }))
   };
 }
 

@@ -36,6 +36,7 @@ export const PlayerSchema = z.object({
   reachedRally: z.boolean().default(false),
   usedNoisePing: z.boolean().default(false),
   usedDecoyPower: z.boolean().default(false),
+  copScanUses: z.number().int().nonnegative().max(2).default(0),
   arrestAttemptsUsed: z.number().int().nonnegative().max(2).default(0),
   lastLocation: CoordinatesSchema.nullable().default(null),
   cooldowns: z.record(ActionTypeSchema, z.number().int().nonnegative()).default({
@@ -51,6 +52,7 @@ export type GamePhase = z.infer<typeof GamePhaseSchema>;
 
 export const MissionSchema = z.object({
   id: z.string(),
+  name: z.string(),
   point: CoordinatesSchema,
   completed: z.boolean(),
   holdStartTick: z.number().int().nonnegative().nullable()
@@ -70,7 +72,10 @@ export const GameStateSchema = z.object({
   revealUntilTick: z.number().int().nonnegative(),
   nextRevealTick: z.number().int().nonnegative(),
   decoyNextReveal: z.boolean().default(false),
+  copScanUntilTick: z.number().int().nonnegative().default(0),
   winner: z.enum(["cops", "fugitive"]).nullable().default(null),
+  endReason: z.enum(["arrest", "missions", "timeout"]).nullable().default(null),
+  arrestedById: z.string().nullable().default(null),
   debriefPoint: CoordinatesSchema.nullable().default(null),
   eventLog: z.array(z.string())
 });
@@ -91,7 +96,7 @@ export const DEFAULT_COOLDOWN_SEC: Record<ActionType, number> = {
 };
 
 export const DEFAULT_SETTINGS: RoomSettings = {
-  roomName: "City Chase",
+  roomName: "Chasse urbaine",
   durationSec: 3600,
   maxPlayers: 12,
   minPlayersToStart: 6,

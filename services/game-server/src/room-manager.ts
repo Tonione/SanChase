@@ -19,7 +19,8 @@ import {
   revealPositions,
   startMissionHold,
   cancelMissionHold,
-  tickState
+  tickState,
+  useCopScan
 } from "../../../packages/shared/src/index.js";
 
 export type Room = { state: GameState; tokens: Map<string, string> };
@@ -47,6 +48,7 @@ export class RoomManager {
       reachedRally: false,
       usedNoisePing: false,
       usedDecoyPower: false,
+      copScanUses: 0,
       arrestAttemptsUsed: 0,
       lastLocation: null
     });
@@ -106,11 +108,11 @@ export class RoomManager {
     return { room, result: attemptArrest(room.state, by) };
   }
 
-  updateLocation(roomId: string, playerId: string, location: Coordinates) {
+  updateLocation(roomId: string, playerId: string, location: Coordinates, simulated = false) {
     const room = this.requireRoom(roomId);
     const player = room.state.players[playerId];
     if (!player) throw new Error("player not found");
-    player.lastLocation = clampLocation(player.lastLocation, location);
+    player.lastLocation = simulated ? location : clampLocation(player.lastLocation, location);
     if (room.state.phase === "rally") markRallyReached(room.state, playerId);
     return room;
   }
@@ -127,9 +129,9 @@ export class RoomManager {
     return room;
   }
 
-  completeMissionHold(roomId: string, by: string, missionId: string) {
+  completeMissionHold(roomId: string, by: string, missionId: string, requiredHoldSec?: number) {
     const room = this.requireRoom(roomId);
-    completeMissionHold(room.state, by, missionId);
+    completeMissionHold(room.state, by, missionId, requiredHoldSec);
     return room;
   }
 
@@ -142,6 +144,12 @@ export class RoomManager {
   useDecoyReveal(roomId: string, by: string) {
     const room = this.requireRoom(roomId);
     enableNextDecoyReveal(room.state, by);
+    return room;
+  }
+
+  useCopScan(roomId: string, by: string) {
+    const room = this.requireRoom(roomId);
+    useCopScan(room.state, by);
     return room;
   }
 
