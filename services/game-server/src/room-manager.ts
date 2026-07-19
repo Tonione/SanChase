@@ -13,16 +13,18 @@ import {
   canStartGame,
   clampLocation,
   completeMissionHold,
+  computePlayAreaRadiusM,
   constrainLocation,
   createInitialState,
-  computePlayAreaRadiusM,
   enableNextDecoyReveal,
   markRallyReached,
+  revealIntervalSec,
   revealPositions,
   setPlayAreaRadius,
   startMissionHold,
   cancelMissionHold,
   tickState,
+  updateArrestStillness,
   useCopScan
 } from "../../../packages/shared/src/index.js";
 
@@ -52,7 +54,8 @@ export class RoomManager {
       usedNoisePing: false,
       usedDecoyPower: false,
       copScanUses: 0,
-      arrestAttemptsUsed: 0,
+      arrestPenaltyAnchor: null,
+      arrestStillSinceTick: null,
       lastLocation: null
     });
     const token = randomUUID();
@@ -104,7 +107,8 @@ export class RoomManager {
       if (!gate.ok) throw new Error(gate.reason);
     }
     room.state.phase = "active";
-    room.state.nextRevealTick = room.state.tick + 7 * 60;
+    const radiusM = room.state.playArea?.radiusM ?? 1320;
+    room.state.nextRevealTick = room.state.tick + revealIntervalSec(radiusM);
     assignFugitiveMissions(room.state);
     room.state.eventLog.push(`${Date.now()}:system:${force ? "chase_forced" : "chase_started"}`);
     return room;
@@ -120,6 +124,9 @@ export class RoomManager {
     const player = room.state.players[playerId];
     if (!player) throw new Error("player not found");
     player.lastLocation = simulated ? location : constrainLocation(room.state, player.lastLocation, location);
+    if (room.state.phase === "active" && player.id !== room.state.fugitiveId && player.arrestPenaltyAnchor) {
+      updateArrestStillness(room.state, playerId, player.lastLocation);
+    }
     if (room.state.phase === "rally") markRallyReached(room.state, playerId);
     return room;
   }

@@ -33,6 +33,19 @@ let radiusSliderDragging = false;
 const MISSION_HOLD_SEC = () => (devMode ? 5 : 30);
 const MISSION_HIT_M = 15;
 const MAX_COP_SCAN_USES = 2;
+const ARREST_FAIL_STILL_SEC = 10;
+
+function revealDisplayMs(state) {
+  const radiusM = state?.playArea?.radiusM ?? playAreaRadius?.radiusM ?? 1320;
+  return (radiusM < 120 ? 15 : 30) * 1000;
+}
+
+function arrestRecoveryLabel(me, tick) {
+  if (!me?.arrestPenaltyAnchor) return null;
+  if (me.arrestStillSinceTick === null) return "Restez immobile…";
+  const remaining = Math.max(0, ARREST_FAIL_STILL_SEC - (tick - me.arrestStillSinceTick));
+  return remaining > 0 ? `Immobile… ${remaining} s` : null;
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -63,6 +76,8 @@ ws.onmessage = (ev) => {
     render(msg.startEligibility);
   } else if (msg.type === "reveal_positions") {
     ensureMap();
+    unlockAudio();
+    playRevealAlert();
     revealMarkers.forEach((m) => map.removeLayer(m));
     revealMarkers = msg.positions.map((p) =>
       L.marker([p.lat, p.lng], { icon: emojiIcon("🦸‍♀️"), zIndexOffset: 500 }).addTo(map)
@@ -71,7 +86,7 @@ ws.onmessage = (ev) => {
     setTimeout(() => {
       revealMarkers.forEach((m) => map.removeLayer(m));
       revealMarkers = [];
-    }, 20000);
+    }, revealDisplayMs(currentState));
   } else if (msg.type === "sound_event" && msg.sound === "noise_ping") {
     unlockAudio();
     playLoudNoise();
@@ -249,8 +264,7 @@ function renderGame(eligibility) {
     rallyProgressEl.classList.remove("hidden");
     rallyProgressEl.textContent = `${reached}/${total} joueur${total > 1 ? "s" : ""} en position`;
     if (currentState.playArea?.radiusM) {
-      const km = (currentState.playArea.radiusM / 1000).toFixed(1);
-      rallyProgressEl.textContent += ` · Zone ${km} km`;
+      rallyProgressEl.textContent += ` · Zone ${formatRadiusM(currentState.playArea.radiusM)}`;
     }
     if (currentState.rallyPoints[myId]) {
       const reachedSelf = me.reachedRally;
@@ -290,6 +304,23 @@ function renderGame(eligibility) {
   renderGameOver();
 }
 
+function formatRadiusM(m) {
+  if (m < 1000) return `${Math.round(m)} m`;
+  return `${(m / 1000).toFixed(2)} km`;
+}
+
+function formatAreaPerCop(km2) {
+  if (km2 < 0.01) return `${Math.round(km2 * 1_000_000)} m²/flic`;
+  return `${km2.toFixed(3)} km²/flic`;
+}
+
+function mapZoomForRadius(radiusM) {
+  if (radiusM <= 30) return 18;
+  if (radiusM <= 60) return 17;
+  if (radiusM <= 120) return 16;
+  return 15;
+}
+
 function renderPlayAreaAssessment() {
   const el = $("play-area-assessment");
   if (!el || !playAreaAssessment || currentState.phase === "lobby") {
@@ -307,14 +338,18 @@ function renderPlayAreaAssessment() {
   el.classList.remove("hidden", "too_small", "tight", "balanced", "large", "too_large");
   el.classList.add(a.verdict);
 
-  const km = (a.radiusM / 1000).toFixed(2);
-  const recKm = (a.recommendedRadiusM / 1000).toFixed(2);
+  const sizeLabel = a.isMicro
+    ? `${a.diameterM} m de diamètre`
+    : formatRadiusM(a.radiusM);
+  const rangeLabel = a.isMicro
+    ? `${Math.round(a.balancedMinM * 2)}–${Math.round(a.balancedMaxM * 2)} m`
+    : `${formatRadiusM(a.balancedMinM)}–${formatRadiusM(a.balancedMaxM)}`;
   el.innerHTML = `
-    <div class="assessment-title">Zone : ${a.verdictLabelFr} (${km} km)</div>
+    <div class="assessment-title">Zone : ${a.verdictLabelFr} (${sizeLabel})</div>
     <div class="assessment-metrics">
       Traversée ~${a.walkCrossingMin} min à pied · ~${a.jogCrossingMin} min en courant<br>
-      ${a.copCount} flic${a.copCount > 1 ? "s" : ""} · ${a.areaPerCopKm2} km²/flic · marge fugitive ${a.evasionMarginM} m<br>
-      Plage équilibrée : ${(a.balancedMinM / 1000).toFixed(2)}–${(a.balancedMaxM / 1000).toFixed(2)} km · cible ${recKm} km
+      ${a.copCount} flic${a.copCount > 1 ? "s" : ""} · ${formatAreaPerCop(a.areaPerCopKm2)} · marge ${a.evasionMarginM} m<br>
+      Plage équilibrée : ${rangeLabel}${a.isMicro ? "" : ` · cible ${formatRadiusM(a.recommendedRadiusM)}`}
     </div>
     <div class="assessment-hint">${escapeHtml(a.hintFr)}</div>`;
 }
@@ -362,18 +397,19 @@ function renderPlayAreaControls(context) {
 function mountPlayAreaControls(container, info, compact) {
   if (!container || radiusSliderDragging) return;
 
-  const km = (info.currentM / 1000).toFixed(2);
+  const radiusLabel = formatRadiusM(info.currentM);
   const autoLabel = info.isAuto ? " (auto)" : "";
   container.innerHTML = `
     ${compact ? '<span class="dev-label">Zone</span>' : ""}
     <label>
-      <span>Rayon de la zone</span>
-      <span class="radius-value">${km} km${autoLabel}</span>
+      <span>Rayon de la zone · Ø ${Math.round(info.currentM * 2)} m</span>
+      <span class="radius-value">${radiusLabel}${autoLabel}</span>
     </label>
     <input type="range" min="${info.minM}" max="${info.maxM}" step="${info.stepM}" value="${info.currentM}" />
     <div class="play-area-presets">
       <button type="button" class="btn btn-secondary btn-sm preset-auto${info.isAuto ? " active" : ""}">Auto</button>
-      <button type="button" class="btn btn-secondary btn-sm preset-tight">Compacte</button>
+      <button type="button" class="btn btn-secondary btn-sm preset-hide-seek">Cache-cache</button>
+      <button type="button" class="btn btn-secondary btn-sm preset-micro">Mini</button>
       <button type="button" class="btn btn-secondary btn-sm preset-balanced">Équilibrée</button>
     </div>`;
 
@@ -383,7 +419,7 @@ function mountPlayAreaControls(container, info, compact) {
   slider.addEventListener("pointerdown", () => { radiusSliderDragging = true; });
   slider.addEventListener("pointerup", () => { radiusSliderDragging = false; });
   slider.addEventListener("input", () => {
-    valueEl.textContent = `${(Number(slider.value) / 1000).toFixed(2)} km`;
+    valueEl.textContent = formatRadiusM(Number(slider.value));
   });
   slider.addEventListener("change", () => {
     radiusSliderDragging = false;
@@ -391,7 +427,8 @@ function mountPlayAreaControls(container, info, compact) {
   });
 
   container.querySelector(".preset-auto")?.addEventListener("click", () => sendPlayAreaRadius(null));
-  container.querySelector(".preset-tight")?.addEventListener("click", () => sendPlayAreaRadius(info.presets.tightM));
+  container.querySelector(".preset-hide-seek")?.addEventListener("click", () => sendPlayAreaRadius(info.presets.hideSeekM));
+  container.querySelector(".preset-micro")?.addEventListener("click", () => sendPlayAreaRadius(info.presets.microM));
   container.querySelector(".preset-balanced")?.addEventListener("click", () => sendPlayAreaRadius(info.presets.balancedM));
 
   if (compact) container.classList.add("play-area-controls-compact");
@@ -538,9 +575,11 @@ function renderGameActions(eligibility) {
           }
         }));
       }
-      const attemptsLeft = 2 - (me.arrestAttemptsUsed ?? 0);
-      if (attemptsLeft > 0) {
-        wrap.appendChild(actionBtn(`Arrêter (${attemptsLeft} restant${attemptsLeft > 1 ? "s" : ""})`, "btn-danger", () => {
+      const arrestLabel = arrestRecoveryLabel(me, currentState.tick);
+      if (arrestLabel) {
+        wrap.appendChild(actionBtn(arrestLabel, "btn-danger", null, true));
+      } else {
+        wrap.appendChild(actionBtn("Arrêter", "btn-danger", () => {
           ws.send(JSON.stringify({ type: "attempt_arrest", roomId, by: myId }));
         }));
       }
@@ -594,19 +633,22 @@ function renderMapLayers() {
   }
 
   const rp = currentState.rallyPoints[myId];
+  const rallyHit = playAreaRadius?.rallyHitM ?? 40;
   if (rp && phase === "rally") {
     if (!rallyMarker) {
       rallyMarker = L.circle([rp.lat, rp.lng], {
-        radius: 40,
+        radius: rallyHit,
         color: me.reachedRally ? "#86efac" : "#22c55e",
         fillColor: me.reachedRally ? "#86efac" : "#22c55e",
         fillOpacity: me.reachedRally ? 0.35 : 0.2,
         weight: me.reachedRally ? 3 : 2
       }).addTo(map);
       rallyFlagMarker = L.marker([rp.lat, rp.lng], { icon: emojiIcon("📍"), zIndexOffset: 400 }).addTo(map);
-      map.setView([rp.lat, rp.lng], 15);
+      const areaR = currentState.playArea?.radiusM ?? 500;
+      map.setView([rp.lat, rp.lng], mapZoomForRadius(areaR));
     } else {
       rallyMarker.setLatLng([rp.lat, rp.lng]);
+      rallyMarker.setRadius(rallyHit);
       rallyMarker.setStyle({
         color: me.reachedRally ? "#86efac" : "#22c55e",
         fillColor: me.reachedRally ? "#86efac" : "#22c55e",
@@ -1128,6 +1170,30 @@ function playLoudNoise() {
     gain.connect(audioCtx.destination);
     osc.start();
     setTimeout(() => osc.stop(), 1800);
+  } catch {
+    showToast("Activez le son dans les paramètres du navigateur");
+  }
+}
+
+function playRevealAlert() {
+  try {
+    unlockAudio();
+    if (!audioCtx) return;
+    const playBeep = (freq, startMs, durMs) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.value = 0.65;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      const t = audioCtx.currentTime + startMs / 1000;
+      osc.start(t);
+      osc.stop(t + durMs / 1000);
+    };
+    playBeep(660, 0, 180);
+    playBeep(880, 220, 220);
+    playBeep(1100, 480, 280);
   } catch {
     showToast("Activez le son dans les paramètres du navigateur");
   }

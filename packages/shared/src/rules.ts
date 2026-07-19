@@ -1,10 +1,32 @@
 import { ActionEvent, DEFAULT_COOLDOWN_SEC, DEFAULT_SETTINGS, GameState, Coordinates, Mission, PlayArea, RoomSettings } from "./domain.js";
+import {
+  clampPlayAreaRadiusM,
+  missionDistancesM,
+  PLAY_AREA_HIDE_SEEK_RADIUS_M,
+  PLAY_AREA_MAX_M,
+  PLAY_AREA_MICRO_RADIUS_M,
+  PLAY_AREA_MIN_M,
+  PLAY_AREA_STEP_M,
+  rallyHitRadiusM,
+  rallySpreadM
+} from "./play-area-layout.js";
 import { computeMinPlayAreaRadiusM, computeRecommendedPlayAreaRadiusM } from "./play-area-assessment.js";
 
-const REVEAL_INTERVAL_SEC = 7 * 60;
-const REVEAL_DURATION_SEC = 20;
-const RALLY_RADIUS_M = 320;
-const RALLY_HIT_M = 40;
+const REVEAL_INTERVAL_URBAN_SEC = 7 * 60;
+const REVEAL_INTERVAL_MICRO_SEC = 2 * 60;
+const REVEAL_DISPLAY_URBAN_SEC = 30;
+const REVEAL_DISPLAY_MICRO_SEC = 15;
+export const REVEAL_DISPLAY_SEC = REVEAL_DISPLAY_URBAN_SEC;
+export const ARREST_FAIL_STILL_SEC = 10;
+export const ARREST_FAIL_MOVE_M = 4;
+
+export function revealIntervalSec(radiusM: number): number {
+  return radiusM < 120 ? REVEAL_INTERVAL_MICRO_SEC : REVEAL_INTERVAL_URBAN_SEC;
+}
+
+export function revealDisplaySec(radiusM: number): number {
+  return radiusM < 120 ? REVEAL_DISPLAY_MICRO_SEC : REVEAL_DISPLAY_URBAN_SEC;
+}
 const MISSION_HIT_M = 15;
 const MISSION_HOLD_SEC = 30;
 export const DEV_MISSION_HOLD_SEC = 5;
@@ -12,11 +34,7 @@ export const MISSION_HIT_RADIUS_M = MISSION_HIT_M;
 export const COP_SCAN_DURATION_SEC = 180;
 export const MAX_COP_SCAN_USES = 2;
 
-const PLAY_AREA_MIN_M = 650;
-const PLAY_AREA_MAX_M = 2200;
-const PLAY_AREA_STEP_M = 50;
-
-export { PLAY_AREA_MIN_M, PLAY_AREA_MAX_M, PLAY_AREA_STEP_M };
+export { clampPlayAreaRadiusM, PLAY_AREA_MIN_M, PLAY_AREA_MAX_M, PLAY_AREA_STEP_M };
 
 export const MISSION_NAMES = [
   "Déposer un colis mort",
@@ -120,10 +138,6 @@ export function canStartChase(state: GameState): { ok: boolean; reason: string }
   return { ok: true, reason: `Tous les joueurs (${total}) sont en place — prêt à chasser !` };
 }
 
-export function clampPlayAreaRadiusM(radiusM: number): number {
-  return Math.min(PLAY_AREA_MAX_M, Math.max(PLAY_AREA_MIN_M, Math.round(radiusM)));
-}
-
 export function resolvePlayAreaRadiusM(state: GameState): number {
   if (state.settings.playAreaRadiusM != null) {
     return clampPlayAreaRadiusM(state.settings.playAreaRadiusM);
@@ -152,8 +166,11 @@ export function playAreaRadiusInfo(state: GameState) {
     presets: {
       tightM: clampPlayAreaRadiusM(Math.round(minGeometryM * 1.1)),
       balancedM: clampPlayAreaRadiusM(recommendedM),
-      recommendedM: clampPlayAreaRadiusM(recommendedM)
-    }
+      recommendedM: clampPlayAreaRadiusM(recommendedM),
+      hideSeekM: clampPlayAreaRadiusM(PLAY_AREA_HIDE_SEEK_RADIUS_M),
+      microM: clampPlayAreaRadiusM(PLAY_AREA_MICRO_RADIUS_M)
+    },
+    rallyHitM: state.playArea ? rallyHitRadiusM(state.playArea.radiusM) : rallyHitRadiusM(currentM)
   };
 }
 
@@ -169,6 +186,15 @@ export function setPlayAreaRadius(state: GameState, radiusM: number | null): voi
   const resolved = resolvePlayAreaRadiusM(state);
   if (state.playArea) {
     state.playArea = { ...state.playArea, radiusM: resolved };
+    if (state.phase === "rally") {
+      const center = state.playArea.center;
+      const ids = Object.keys(state.players);
+      ids.forEach((id, index) => {
+        const bearing = (2 * Math.PI * index) / Math.max(ids.length, 1);
+        const point = offsetMeters(center, rallySpreadM(resolved), bearing);
+        state.rallyPoints[id] = { ...point, accuracyM: 10, ts: Date.now() };
+      });
+    }
     for (const player of Object.values(state.players)) {
       if (player.lastLocation) {
         player.lastLocation = clampToPlayArea(state.playArea, player.lastLocation);
@@ -194,7 +220,7 @@ export function assignRallyPoints(state: GameState, center: Coordinates) {
   state.rallyPoints = {};
   ids.forEach((id, index) => {
     const bearing = (2 * Math.PI * index) / Math.max(ids.length, 1);
-    const point = offsetMeters(center, RALLY_RADIUS_M, bearing);
+    const point = offsetMeters(center, rallySpreadM(radiusM), bearing);
     state.rallyPoints[id] = { ...point, accuracyM: 10, ts: Date.now() };
   });
 }
@@ -227,9 +253,11 @@ export function assignFugitiveMissions(state: GameState) {
 
   const base = fugitive.lastLocation;
   const names = pickMissionNames(3);
+  const radiusM = state.playArea?.radiusM ?? computePlayAreaRadiusM(Object.keys(state.players).length, state.settings.boundaryPreset);
+  const distances = missionDistancesM(radiusM);
   state.missions = [0, 1, 2].map((i) => {
     const bearing = ((Math.PI * 2) / 3) * i + Math.random() * 0.2;
-    const distance = 350 + i * 220;
+    const distance = distances[i];
     const point = offsetMeters(base, distance, bearing);
     const raw = { ...point, accuracyM: 10, ts: Date.now() };
     const placed = state.playArea ? clampToPlayArea(state.playArea, raw) : raw;
@@ -257,7 +285,10 @@ export function markRallyReached(state: GameState, playerId: string) {
   const player = state.players[playerId];
   const target = state.rallyPoints[playerId];
   if (!player || !player.lastLocation || !target) return;
-  if (haversineMeters(player.lastLocation.lat, player.lastLocation.lng, target.lat, target.lng) <= RALLY_HIT_M) player.reachedRally = true;
+  const hitM = state.playArea ? rallyHitRadiusM(state.playArea.radiusM) : 40;
+  if (haversineMeters(player.lastLocation.lat, player.lastLocation.lng, target.lat, target.lng) <= hitM) {
+    player.reachedRally = true;
+  }
 }
 
 export function startMissionHold(state: GameState, playerId: string, missionId: string) {
@@ -298,6 +329,40 @@ export function completeMissionHold(
   }
 }
 
+export function canAttemptArrest(cop: GameState["players"][string], tick: number): { ok: boolean; reason: string; remainingSec: number } {
+  if (!cop.arrestPenaltyAnchor) return { ok: true, reason: "", remainingSec: 0 };
+  if (cop.arrestStillSinceTick === null) {
+    return { ok: false, reason: "Restez immobile 10 s pour réessayer l'arrestation.", remainingSec: ARREST_FAIL_STILL_SEC };
+  }
+  const remainingSec = Math.max(0, ARREST_FAIL_STILL_SEC - (tick - cop.arrestStillSinceTick));
+  if (remainingSec === 0) return { ok: true, reason: "", remainingSec: 0 };
+  return { ok: false, reason: `Restez immobile encore ${remainingSec} s avant de réessayer.`, remainingSec };
+}
+
+export function updateArrestStillness(state: GameState, copId: string, loc: Coordinates): void {
+  const cop = state.players[copId];
+  if (!cop?.arrestPenaltyAnchor) return;
+  const moved = haversineMeters(cop.arrestPenaltyAnchor.lat, cop.arrestPenaltyAnchor.lng, loc.lat, loc.lng);
+  if (moved > ARREST_FAIL_MOVE_M) {
+    cop.arrestStillSinceTick = null;
+    cop.arrestPenaltyAnchor = { ...loc };
+  } else if (cop.arrestStillSinceTick === null) {
+    cop.arrestStillSinceTick = state.tick;
+  }
+}
+
+function clearArrestPenalty(cop: GameState["players"][string]): void {
+  cop.arrestPenaltyAnchor = null;
+  cop.arrestStillSinceTick = null;
+}
+
+function tickArrestRecovery(state: GameState): void {
+  for (const cop of Object.values(state.players)) {
+    if (!cop.arrestPenaltyAnchor || cop.arrestStillSinceTick === null) continue;
+    if (state.tick - cop.arrestStillSinceTick >= ARREST_FAIL_STILL_SEC) clearArrestPenalty(cop);
+  }
+}
+
 export function attemptArrest(state: GameState, copId: string): { success: boolean; distanceM: number; thresholdM: number } {
   if (state.phase !== "active") throw new Error("arrest only possible during active chase");
   if (!state.fugitiveId) throw new Error("fugitive unknown");
@@ -306,10 +371,10 @@ export function attemptArrest(state: GameState, copId: string): { success: boole
   const cop = state.players[copId];
   const fug = state.players[state.fugitiveId];
   if (!cop || !fug) throw new Error("player not found");
-  if (cop.arrestAttemptsUsed >= 2) throw new Error("no arrest attempts left");
+  const readiness = canAttemptArrest(cop, state.tick);
+  if (!readiness.ok) throw new Error(readiness.reason);
   if (!cop.lastLocation || !fug.lastLocation) throw new Error("missing location for arrest");
 
-  cop.arrestAttemptsUsed += 1;
   const distance = haversineMeters(cop.lastLocation.lat, cop.lastLocation.lng, fug.lastLocation.lat, fug.lastLocation.lng);
   const effectiveThreshold = Math.max(1, Math.min(8, (cop.lastLocation.accuracyM + fug.lastLocation.accuracyM) / 2));
   const success = distance <= effectiveThreshold;
@@ -322,6 +387,8 @@ export function attemptArrest(state: GameState, copId: string): { success: boole
     state.debriefPoint = computeDebriefPoint(state);
     state.eventLog.push(`${Date.now()}:arrest:success:by:${copId}`);
   } else {
+    cop.arrestPenaltyAnchor = { ...cop.lastLocation };
+    cop.arrestStillSinceTick = null;
     state.eventLog.push(`${Date.now()}:arrest:failed:by:${copId}:d=${distance.toFixed(2)}`);
   }
 
@@ -330,6 +397,7 @@ export function attemptArrest(state: GameState, copId: string): { success: boole
 
 export function tickState(state: GameState): GameState {
   state.tick += 1;
+  tickArrestRecovery(state);
   if (state.phase === "active") {
     if (state.tick >= state.durationSec) {
       state.phase = "finished";
@@ -339,8 +407,9 @@ export function tickState(state: GameState): GameState {
       state.eventLog.push(`${Date.now()}:system:time_up_cops_win`);
     }
     if (state.tick >= state.nextRevealTick) {
-      state.revealUntilTick = state.tick + REVEAL_DURATION_SEC;
-      state.nextRevealTick = state.tick + REVEAL_INTERVAL_SEC;
+      const radiusM = state.playArea?.radiusM ?? 1320;
+      state.revealUntilTick = state.tick + revealDisplaySec(radiusM);
+      state.nextRevealTick = state.tick + revealIntervalSec(radiusM);
       state.eventLog.push(`${Date.now()}:system:reveal_window_open`);
     }
   }

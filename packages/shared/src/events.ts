@@ -12,8 +12,11 @@ export const PlayAreaRadiusInfoSchema = z.object({
   presets: z.object({
     tightM: z.number().positive(),
     balancedM: z.number().positive(),
-    recommendedM: z.number().positive()
-  })
+    recommendedM: z.number().positive(),
+    hideSeekM: z.number().positive(),
+    microM: z.number().positive()
+  }),
+  rallyHitM: z.number().positive()
 });
 
 export const ClientMessageSchema = z.discriminatedUnion("type", [

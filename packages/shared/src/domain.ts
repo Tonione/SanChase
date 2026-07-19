@@ -38,7 +38,8 @@ export const PlayerSchema = z.object({
   usedNoisePing: z.boolean().default(false),
   usedDecoyPower: z.boolean().default(false),
   copScanUses: z.number().int().nonnegative().max(2).default(0),
-  arrestAttemptsUsed: z.number().int().nonnegative().max(2).default(0),
+  arrestPenaltyAnchor: CoordinatesSchema.nullable().default(null),
+  arrestStillSinceTick: z.number().int().nonnegative().nullable().default(null),
   lastLocation: CoordinatesSchema.nullable().default(null),
   cooldowns: z.record(ActionTypeSchema, z.number().int().nonnegative()).default({
     sonar_ping: 0,

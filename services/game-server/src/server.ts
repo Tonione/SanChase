@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import { ClientMessageSchema, DEV_MISSION_HOLD_SEC, GameState, assessPlayArea, isCopScanActive, playAreaRadiusInfo, ServerMessage } from "../../../packages/shared/src/index.js";
+import { ClientMessageSchema, DEV_MISSION_HOLD_SEC, GameState, assessPlayArea, isCopScanActive, playAreaRadiusInfo, revealDisplaySec, ServerMessage } from "../../../packages/shared/src/index.js";
 import { RoomManager } from "./room-manager.js";
 
 const manager = new RoomManager();
@@ -53,7 +53,7 @@ wss.on("connection", (socket) => {
           type: "action_event",
           message: result.success
             ? `${copName} a arrêté le fugitif. Rendez-vous au point de debrief.`
-            : `Échec de l'arrestation (${result.distanceM.toFixed(1)} m > ${result.thresholdM.toFixed(1)} m).`
+            : `Échec de l'arrestation (${result.distanceM.toFixed(1)} m > ${result.thresholdM.toFixed(1)} m). ${copName} doit rester immobile 10 s.`
         });
         return sync(msg.roomId, room.state);
       }
@@ -109,8 +109,12 @@ setInterval(() => {
   manager.tickAll();
   for (const [roomId, room] of manager.all()) {
     sync(roomId, room.state);
-    if (room.state.phase === "active" && room.state.tick === room.state.revealUntilTick - 20) {
-      broadcastToCops(roomId, room.state, { type: "reveal_positions", positions: manager.revealPositions(roomId) });
+    if (room.state.phase === "active" && room.state.revealUntilTick > 0) {
+      const radiusM = room.state.playArea?.radiusM ?? 1320;
+      const displaySec = revealDisplaySec(radiusM);
+      if (room.state.tick === room.state.revealUntilTick - displaySec) {
+        broadcastToCops(roomId, room.state, { type: "reveal_positions", positions: manager.revealPositions(roomId) });
+      }
     }
   }
 }, 1000);
