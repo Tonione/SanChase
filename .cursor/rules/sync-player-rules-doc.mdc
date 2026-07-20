@@ -1,0 +1,26 @@
+---
+description: Keep docs/regles-joueurs.txt in sync when game rules change
+globs: packages/shared/src/**,apps/web/static/main.js,services/game-server/**
+alwaysApply: false
+---
+
+# Player rules document
+
+When you change **gameplay rules** (mechanics, timings, win/lose conditions, powers, phases, play area, elimination, etc.), you **must** update `docs/regles-joueurs.txt` in the same change.
+
+## Source of truth
+
+- `packages/shared/src/rules.ts` — core mechanics
+- `packages/shared/src/domain.ts` — phases, player fields, settings
+- `packages/shared/src/play-area-layout.ts` — zone sizing, rally/mission geometry
+- Client-only timings in `apps/web/static/main.js` only if they differ in production (e.g. dev mode)
+
+## How to update the doc
+
+- Language: **French**, player-facing (no code, no dev jargon).
+- Format: short spoken briefing an organizer can read aloud (~1–2 min).
+- Cover **all** rules currently in effect: setup, rally, chase, missions, arrest, reveals, powers, boundaries, elimination, victory conditions.
+- Keep numbers accurate (seconds, counts, radii described in plain language).
+- Do **not** add technical maintenance notes inside the txt file.
+
+If a rules change is reverted or only refactors without behavior change, leave the doc unchanged.

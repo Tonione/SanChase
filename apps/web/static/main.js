@@ -20,7 +20,6 @@ let boundaryBorderLayer = null;
 let holdTimer = null;
 let holdMissionId = null;
 let simLocation = defaultSimLocation();
-let mapClickBound = false;
 let audioCtx = null;
 let audioUnlocked = false;
 let pendingMissionResult = null;
@@ -31,11 +30,23 @@ let playAreaRadius = null;
 let radiusSliderDragging = false;
 let setupCenterMarker = null;
 let setupMapClickBound = false;
+let setupCenterSynced = false;
+let setupConfirmPending = false;
+let lastLocationSentAt = 0;
+let lastLocationSent = null;
+let lastClientPhase = null;
+let lastSetupViewKey = null;
+let lastPlayAreaBoundaryKey = null;
+let mapResizeTimer = null;
+let stickyMissionId = null;
+let lastGameActionsPhase = null;
 
 const MISSION_HOLD_SEC = () => (devMode ? 5 : 30);
 const MISSION_HIT_M = 15;
+const MISSION_EXIT_M = 35;
 const MAX_COP_SCAN_USES = 2;
 const ARREST_FAIL_STILL_SEC = 10;
+const OUTSIDE_GRACE_SEC = 20;
 
 function revealDisplayMs(state) {
   const radiusM = state?.playArea?.radiusM ?? playAreaRadius?.radiusM ?? 1320;
@@ -99,6 +110,7 @@ ws.onmessage = (ev) => {
     showToast(msg.message);
   } else if (msg.type === "error") {
     const errMsg = msg.message.replace(/^Error:\s*/, "");
+    setupConfirmPending = false;
     if (pendingMissionResult && /too far|trop loin|hold duration|mission hold|maintien/i.test(errMsg)) {
       showMissionOverlay("fail", "Mission échouée", "Trop loin de la cible");
       pendingMissionResult = null;
@@ -143,24 +155,13 @@ $("btn-select-fugitive").onclick = () => {
 };
 
 $("btn-start-launch").onclick = () => {
-  ws.send(JSON.stringify({ type: "start_game", roomId, by: myId }));
+  requestFreshLocation().then((loc) => {
+    if (loc) sendLocationUpdate(loc, false, { force: true });
+    ws.send(JSON.stringify({ type: "start_game", roomId, by: myId }));
+  });
 };
 
-if (devMode) {
-  $("dev-lobby-panel")?.classList.remove("hidden");
-  $("dev-panel")?.classList.remove("hidden");
-  $("dev-lobby-loc")?.addEventListener("click", () => {
-    sendSimLocation(simLocation.lat, simLocation.lng);
-    showToast("Position test envoyée");
-  });
-  $("dev-rally")?.addEventListener("click", () => teleportToRally());
-  $("dev-mission")?.addEventListener("click", () => teleportToMission());
-  $("dev-fugitive")?.addEventListener("click", () => teleportNearFugitive());
-  $("dev-reveal")?.addEventListener("click", () => triggerDevReveal());
-  setInterval(() => {
-    if (roomId) sendSimLocation(simLocation.lat, simLocation.lng);
-  }, 3000);
-} else if (navigator.geolocation) {
+if (navigator.geolocation) {
   navigator.geolocation.watchPosition(
     (pos) => {
       applyLocation({
@@ -175,6 +176,22 @@ if (devMode) {
   );
 }
 
+if (devMode) {
+  $("dev-lobby-panel")?.classList.remove("hidden");
+  $("dev-panel")?.classList.remove("hidden");
+  $("dev-lobby-loc")?.addEventListener("click", () => {
+    sendSimLocation(simLocation.lat, simLocation.lng);
+    showToast("Position test envoyée");
+  });
+  $("dev-rally")?.addEventListener("click", () => teleportToRally());
+  $("dev-mission")?.addEventListener("click", () => teleportToMission());
+  $("dev-fugitive")?.addEventListener("click", () => teleportNearFugitive());
+  $("dev-reveal")?.addEventListener("click", () => triggerDevReveal());
+  setInterval(() => {
+    if (roomId && !me?.lastLocation) sendSimLocation(simLocation.lat, simLocation.lng);
+  }, 3000);
+}
+
 function render(eligibility) {
   if (!currentState || !me) return;
 
@@ -183,17 +200,78 @@ function render(eligibility) {
   }
 
   const phase = currentState.phase;
+  const prevPhase = lastClientPhase;
+  const structuralChanged = phase !== prevPhase || didStructureChange();
+  lastClientPhase = phase;
+
   if (phase === "lobby") {
     showScreen("lobby");
     renderLobby(eligibility);
-  } else if (phase === "setup" && me.role !== "organizer") {
+    return;
+  }
+  if (phase === "setup" && me.role !== "organizer") {
     showScreen("lobby");
     renderSetupWaiting();
-  } else {
-    showScreen("game");
-    ensureMap();
-    renderGame(eligibility);
+    return;
   }
+
+  showScreen("game");
+  ensureMap();
+  if (phase === "setup" && me.role === "organizer" && structuralChanged) {
+    setupCenterSynced = false;
+    requestFreshLocation().finally(() => syncSetupCenterToGps());
+  }
+
+  if (structuralChanged) {
+    renderGame(eligibility);
+    scheduleMapResize();
+    if (prevPhase !== phase) setTimeout(scheduleMapResize, 400);
+  } else {
+    renderGameLight(eligibility);
+  }
+}
+
+function didStructureChange() {
+  const s = currentState;
+  const pa = s.playArea;
+  const key = [
+    s.phase,
+    s.fugitiveId,
+    pa?.center?.lat?.toFixed(5),
+    pa?.center?.lng?.toFixed(5),
+    pa?.radiusM,
+    s.settings?.playAreaRadiusM,
+    JSON.stringify(s.rallyPoints),
+    JSON.stringify(s.missions?.map((m) => ({ id: m.id, c: m.completed }))),
+    Object.values(s.players).map((p) => `${p.id}:${p.ready}:${p.reachedRally}`).join("|")
+  ].join(";");
+  if (key === didStructureChange._last) return false;
+  didStructureChange._last = key;
+  return true;
+}
+
+function renderGameLight(eligibility) {
+  const phase = currentState.phase;
+  const isFugitive = currentState.fugitiveId === myId;
+
+  if (phase === "rally") {
+    const { reached, total } = countRallyReached();
+    const rallyProgressEl = $("rally-progress");
+    rallyProgressEl.textContent = `${reached}/${total} joueur${total > 1 ? "s" : ""} en position`;
+    if (currentState.playArea?.radiusM) {
+      rallyProgressEl.textContent += ` · Zone ${formatRadiusM(currentState.playArea.radiusM)}`;
+    }
+  }
+
+  if (phase === "active" && !isFugitive && isCopScanActive(currentState)) {
+    const left = Math.max(0, currentState.copScanUntilTick - currentState.tick);
+    $("cop-scan-alert").textContent = `⚠️ Scan fugitif actif — ${formatCountdown(left)} restantes`;
+  }
+
+  renderBoundaryAlert();
+
+  renderMapLayers();
+  renderGameActions(eligibility);
 }
 
 function renderSetupWaiting() {
@@ -286,7 +364,13 @@ function renderLobby(eligibility) {
 
 function renderGame(eligibility) {
   const phase = currentState.phase;
+  if (phase !== "setup") {
+    setupCenterSynced = false;
+    setupConfirmPending = false;
+    lastSetupViewKey = null;
+  }
   const isFugitive = currentState.fugitiveId === myId;
+  $("screen-game").classList.toggle("phase-setup", phase === "setup");
   $("screen-game").classList.toggle("role-fugitive", isFugitive);
 
   const pill = $("phase-pill");
@@ -342,6 +426,7 @@ function renderGame(eligibility) {
   }
 
   renderMapLayers();
+  renderBoundaryAlert();
   renderGameActions(eligibility);
   renderPlayAreaAssessment();
   renderPlayAreaControls("game");
@@ -368,13 +453,17 @@ function mapZoomForRadius(radiusM) {
 
 function renderPlayAreaAssessment() {
   const el = $("play-area-assessment");
-  if (!el || !playAreaAssessment || currentState.phase === "lobby") {
+  if (!el || !playAreaAssessment || currentState.phase === "lobby" || currentState.phase === "setup") {
     el?.classList.add("hidden");
     return;
   }
 
   const isOrganizer = me.role === "organizer";
   if (!devMode && !isOrganizer) {
+    el.classList.add("hidden");
+    return;
+  }
+  if (isMobileLayout()) {
     el.classList.add("hidden");
     return;
   }
@@ -405,6 +494,7 @@ function renderPlayAreaControls(context) {
 
   const lobbyEl = $("lobby-play-area-controls");
   const gameEl = $("game-play-area-controls");
+  const setupEl = $("setup-play-area-controls");
   const devEl = $("dev-play-area-controls");
   const optionsEl = $("organizer-options");
 
@@ -420,11 +510,26 @@ function renderPlayAreaControls(context) {
   const inGame = phase === "setup" || phase === "rally" || phase === "active";
   if (!isOrganizer || !inGame || !playAreaRadius) {
     optionsEl?.classList.add("hidden");
+    setupEl?.classList.add("hidden");
+    setupEl?.replaceChildren();
     devEl?.classList.add("hidden");
     gameEl?.replaceChildren();
     devEl?.replaceChildren();
     return;
   }
+
+  if (phase === "setup" && !devMode) {
+    optionsEl?.classList.add("hidden");
+    setupEl?.classList.remove("hidden");
+    devEl?.classList.add("hidden");
+    devEl?.replaceChildren();
+    gameEl?.replaceChildren();
+    mountPlayAreaControls(setupEl, playAreaRadius, true);
+    return;
+  }
+
+  setupEl?.classList.add("hidden");
+  setupEl?.replaceChildren();
 
   if (devMode) {
     optionsEl?.classList.add("hidden");
@@ -441,7 +546,9 @@ function renderPlayAreaControls(context) {
 
 function mountPlayAreaControls(container, info, compact) {
   if (!container || radiusSliderDragging) return;
-
+  const cacheKey = `${info.currentM}:${info.isAuto}:${compact}`;
+  if (container.dataset.controlsKey === cacheKey && container.querySelector('input[type="range"]')) return;
+  container.dataset.controlsKey = cacheKey;
   const radiusLabel = formatRadiusM(info.currentM);
   const autoLabel = info.isAuto ? " (auto)" : "";
   container.innerHTML = `
@@ -550,6 +657,11 @@ function renderGameOver() {
   } else if (currentState.endReason === "timeout") {
     $("game-over-headline").textContent = "Temps écoulé";
     detailEl.textContent = "Le fugitif n'a pas terminé à temps";
+  } else if (currentState.endReason === "boundary") {
+    $("game-over-headline").textContent = "Hors zone de jeu";
+    detailEl.textContent = currentState.fugitiveId === myId
+      ? "Le fugitif est resté trop longtemps hors zone"
+      : "Le fugitif a été éliminé pour sortie de zone";
   } else {
     $("game-over-headline").textContent = "Les flics gagnent";
     detailEl.textContent = "";
@@ -562,89 +674,264 @@ function sendPlayAreaCenter(lat, lng) {
   ws.send(JSON.stringify({ type: "set_play_area_center", roomId, by: myId, lat, lng }));
 }
 
-function renderGameActions(eligibility) {
-  if (holdTimer) return;
+function confirmSetupZone(btn) {
+  if (setupConfirmPending || !roomId) return;
+  setupConfirmPending = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Validation…";
+  }
+  requestFreshLocation().then((loc) => {
+    if (loc) {
+      sendLocationUpdate(loc, false, { force: true });
+      sendPlayAreaCenter(loc.lat, loc.lng);
+    }
+    ws.send(JSON.stringify({ type: "confirm_setup", roomId, by: myId }));
+  });
+}
 
+function renderGameActions(eligibility) {
   const wrap = $("game-actions");
-  wrap.innerHTML = "";
   const phase = currentState.phase;
   const isFugitive = currentState.fugitiveId === myId;
   const isOrganizer = me.role === "organizer";
 
+  if (me.eliminated && (phase === "rally" || phase === "active")) {
+    wrap.replaceChildren();
+    wrap.classList.remove("hidden");
+    wrap.appendChild(actionBtn("Éliminé — hors zone", "btn-secondary", null, true));
+    syncActionBarLayout(wrap);
+    return;
+  }
+
+  if (lastGameActionsPhase !== phase) {
+    wrap.replaceChildren();
+    lastGameActionsPhase = phase;
+  }
+
   if (phase === "setup" && isOrganizer) {
-    wrap.appendChild(actionBtn("Valider la zone", "btn-primary", () => {
-      ws.send(JSON.stringify({ type: "confirm_setup", roomId, by: myId }));
-    }));
-    wrap.appendChild(actionBtn("Centrer sur moi", "btn-secondary", () => {
-      const loc = me.lastLocation ?? getSelfLocation();
-      if (loc) sendPlayAreaCenter(loc.lat, loc.lng);
-      else showToast("Position GPS requise");
-    }));
+    wrap.classList.remove("hidden");
+    let confirmBtn = wrap.querySelector("[data-action=confirm-setup]");
+    if (!confirmBtn) {
+      wrap.replaceChildren();
+      confirmBtn = actionBtn("Valider la zone", "btn-primary", () => confirmSetupZone(confirmBtn));
+      confirmBtn.dataset.action = "confirm-setup";
+      wrap.appendChild(confirmBtn);
+      wrap.appendChild(actionBtn("Centrer sur moi", "btn-secondary", () => {
+        const loc = me.lastLocation ?? getSelfLocation();
+        if (loc) {
+          sendPlayAreaCenter(loc.lat, loc.lng);
+          lastSetupViewKey = null;
+        } else showToast("Position GPS requise");
+      }));
+    }
+    confirmBtn.disabled = setupConfirmPending;
+    confirmBtn.textContent = setupConfirmPending ? "Validation…" : "Valider la zone";
+    syncActionBarLayout(wrap);
+    return;
+  }
+
+  if (phase === "active" && isFugitive) {
+    renderFugitiveActions(wrap);
+    syncActionBarLayout(wrap);
+    return;
   }
 
   if (phase === "rally" && isOrganizer) {
-    wrap.appendChild(actionBtn("Lancer la chasse", "btn-primary", () => {
-      ws.send(JSON.stringify({ type: "start_chase", roomId, by: myId }));
-    }, !eligibility.ok));
-    if (!eligibility.ok) {
-      const forceBtn = actionBtn("Forcer le lancement", "btn-secondary", () => {
-        ws.send(JSON.stringify({ type: "start_chase", roomId, by: myId, force: true }));
-      });
-      forceBtn.title = "Démarrer même si tous les joueurs ne sont pas en position";
-      wrap.appendChild(forceBtn);
+    renderRallyOrganizerActions(wrap, eligibility);
+    syncActionBarLayout(wrap);
+    return;
+  }
+
+  if (phase === "active" && !isFugitive) {
+    renderCopActions(wrap);
+    syncActionBarLayout(wrap);
+    return;
+  }
+
+  wrap.replaceChildren();
+  wrap.classList.add("hidden");
+  syncActionBarLayout(wrap);
+}
+
+function renderFugitiveActions(wrap) {
+  const missionsLeft = currentState.missions.some((m) => !m.completed);
+  if (!missionsLeft) {
+    wrap.replaceChildren();
+    wrap.classList.add("hidden");
+    return;
+  }
+  wrap.classList.remove("hidden");
+
+  let holdBtn = wrap.querySelector("#mission-hold");
+  if (!holdBtn) {
+    wrap.replaceChildren();
+    holdBtn = actionBtn("Démarrer la mission", "btn-primary", () => toggleMissionHold(), true);
+    holdBtn.id = "mission-hold";
+    wrap.appendChild(holdBtn);
+
+    const scanBtn = actionBtn("Scanner les flics", "btn-secondary", () => {
+      ws.send(JSON.stringify({ type: "use_cop_scan", roomId, by: myId }));
+    });
+    scanBtn.id = "cop-scan-btn";
+    scanBtn.style.display = "none";
+    wrap.appendChild(scanBtn);
+
+    const decoyBtn = actionBtn("Leurre", "btn-secondary", () => {
+      ws.send(JSON.stringify({ type: "use_decoy_reveal", roomId, by: myId }));
+    });
+    decoyBtn.id = "decoy-btn";
+    wrap.appendChild(decoyBtn);
+  }
+
+  if (holdTimer) return;
+
+  const mission = findMissionInRange();
+  holdBtn.disabled = !mission;
+  holdBtn.title = mission ? "" : "Approchez-vous d'un objectif sur la carte";
+  holdBtn.textContent = "Démarrer la mission";
+  holdBtn.className = "btn btn-primary";
+
+  const scanUsesLeft = MAX_COP_SCAN_USES - (me.copScanUses ?? 0);
+  const scanActive = isCopScanActive(currentState);
+  const scanBtn = wrap.querySelector("#cop-scan-btn");
+  if (scanBtn) {
+    const showScan = scanUsesLeft > 0 || scanActive;
+    scanBtn.style.display = showScan ? "" : "none";
+    if (showScan) {
+      scanBtn.disabled = scanActive;
+      scanBtn.textContent = scanActive
+        ? `Scan actif — ${formatCountdown(currentState.copScanUntilTick - currentState.tick)}`
+        : `Scanner les flics (${scanUsesLeft} restant${scanUsesLeft > 1 ? "s" : ""})`;
     }
   }
 
-  if (phase === "active") {
-    if (isFugitive) {
-      const missionsLeft = currentState.missions.some((m) => !m.completed);
-      if (missionsLeft) {
-        const mission = findMissionInRange();
-        const holdBtn = actionBtn("Démarrer la mission", "btn-primary", () => toggleMissionHold(), !mission);
-        holdBtn.id = "mission-hold";
-        if (!mission) holdBtn.title = "Approchez-vous d'un objectif sur la carte";
-        wrap.appendChild(holdBtn);
+  const decoyBtn = wrap.querySelector("#decoy-btn");
+  if (decoyBtn) {
+    decoyBtn.disabled = !!me.usedDecoyPower;
+    decoyBtn.textContent = me.usedDecoyPower ? "Leurre (utilisé)" : "Leurre";
+  }
+}
 
-        const scanUsesLeft = MAX_COP_SCAN_USES - (me.copScanUses ?? 0);
-        const scanActive = isCopScanActive(currentState);
-        if (scanUsesLeft > 0 || scanActive) {
-          const scanLabel = scanActive
-            ? `Scan actif — ${formatCountdown(currentState.copScanUntilTick - currentState.tick)}`
-            : `Scanner les flics (${scanUsesLeft} restant${scanUsesLeft > 1 ? "s" : ""})`;
-          wrap.appendChild(actionBtn(
-            scanLabel,
-            "btn-secondary",
-            () => ws.send(JSON.stringify({ type: "use_cop_scan", roomId, by: myId })),
-            scanActive
-          ));
-        }
+function renderCopActions(wrap) {
+  wrap.classList.remove("hidden");
 
-        if (!me.usedDecoyPower) {
-          wrap.appendChild(actionBtn("Leurre", "btn-secondary", () => {
-            ws.send(JSON.stringify({ type: "use_decoy_reveal", roomId, by: myId }));
-          }));
-        }
+  let noiseBtn = wrap.querySelector("#cop-noise-btn");
+  if (!noiseBtn) {
+    wrap.replaceChildren();
+    noiseBtn = actionBtn("Signal sonore", "btn-secondary", () => {
+      unlockAudio();
+      ws.send(JSON.stringify({ type: "cop_noise_ping", roomId, by: myId }));
+      if (devMode) {
+        playLoudNoise();
+        showToast("Signal envoyé (le fugitif l'entend sur son appareil)");
       }
+    });
+    noiseBtn.id = "cop-noise-btn";
+    wrap.appendChild(noiseBtn);
+
+    const arrestBtn = actionBtn("Arrêter", "btn-danger", () => {
+      ws.send(JSON.stringify({ type: "attempt_arrest", roomId, by: myId }));
+    });
+    arrestBtn.id = "cop-arrest-btn";
+    wrap.appendChild(arrestBtn);
+  }
+
+  noiseBtn.disabled = !!me.usedNoisePing;
+  noiseBtn.textContent = me.usedNoisePing ? "Signal sonore (utilisé)" : "Signal sonore";
+
+  const arrestBtn = wrap.querySelector("#cop-arrest-btn");
+  if (arrestBtn) {
+    const arrestLabel = arrestRecoveryLabel(me, currentState.tick);
+    if (arrestLabel) {
+      arrestBtn.disabled = true;
+      arrestBtn.textContent = arrestLabel;
+      arrestBtn.className = "btn btn-danger";
     } else {
-      if (!me.usedNoisePing) {
-        wrap.appendChild(actionBtn("Signal sonore", "btn-secondary", () => {
-          unlockAudio();
-          ws.send(JSON.stringify({ type: "cop_noise_ping", roomId, by: myId }));
-          if (devMode) {
-            playLoudNoise();
-            showToast("Signal envoyé (le fugitif l'entend sur son appareil)");
-          }
-        }));
-      }
-      const arrestLabel = arrestRecoveryLabel(me, currentState.tick);
-      if (arrestLabel) {
-        wrap.appendChild(actionBtn(arrestLabel, "btn-danger", null, true));
-      } else {
-        wrap.appendChild(actionBtn("Arrêter", "btn-danger", () => {
-          ws.send(JSON.stringify({ type: "attempt_arrest", roomId, by: myId }));
-        }));
-      }
+      arrestBtn.disabled = false;
+      arrestBtn.textContent = "Arrêter";
+      arrestBtn.className = "btn btn-danger";
     }
+  }
+}
+
+function renderRallyOrganizerActions(wrap, eligibility) {
+  wrap.classList.remove("hidden");
+  let launchBtn = wrap.querySelector("#launch-chase-btn");
+  if (!launchBtn) {
+    wrap.replaceChildren();
+    launchBtn = actionBtn("Lancer la chasse", "btn-primary", () => {
+      ws.send(JSON.stringify({ type: "start_chase", roomId, by: myId }));
+    }, !eligibility.ok);
+    launchBtn.id = "launch-chase-btn";
+    wrap.appendChild(launchBtn);
+    const forceBtn = actionBtn("Forcer le lancement", "btn-secondary", () => {
+      ws.send(JSON.stringify({ type: "start_chase", roomId, by: myId, force: true }));
+    });
+    forceBtn.id = "force-chase-btn";
+    forceBtn.title = "Démarrer même si tous les joueurs ne sont pas en position";
+    forceBtn.style.display = "none";
+    wrap.appendChild(forceBtn);
+  }
+
+  launchBtn.disabled = !eligibility.ok;
+  const forceBtn = wrap.querySelector("#force-chase-btn");
+  if (forceBtn) forceBtn.style.display = eligibility.ok ? "none" : "";
+}
+
+function syncActionBarLayout(wrap) {
+  const visible = wrap.childElementCount > 0 && !wrap.classList.contains("hidden");
+  screens.game.classList.toggle("actions-visible", visible);
+}
+
+function isSelfOutsidePlayArea() {
+  const loc = getSelfLocation();
+  const area = currentState?.playArea;
+  if (!loc || !area?.center?.lat) return false;
+  return haversineMeters(loc.lat, loc.lng, area.center.lat, area.center.lng) > area.radiusM;
+}
+
+function renderBoundaryAlert() {
+  const el = $("boundary-alert");
+  const hud = $("game-hud");
+  if (!el || !hud || !currentState || !me) return;
+
+  const phase = currentState.phase;
+  const inBoundaryPhase = phase === "rally" || phase === "active";
+  if (!inBoundaryPhase) {
+    el.classList.add("hidden");
+    el.classList.remove("eliminated");
+    hud.classList.remove("player-outside");
+    return;
+  }
+
+  if (me.eliminated) {
+    el.classList.remove("hidden");
+    el.classList.add("eliminated");
+    el.textContent = "Éliminé — vous étiez hors zone de jeu";
+    hud.classList.remove("player-outside");
+    return;
+  }
+
+  const remaining = me.outsideSinceTick != null
+    ? Math.max(0, OUTSIDE_GRACE_SEC - (currentState.tick - me.outsideSinceTick))
+    : null;
+  const outside = remaining != null || isSelfOutsidePlayArea();
+
+  if (!outside) {
+    el.classList.add("hidden");
+    hud.classList.remove("player-outside");
+    return;
+  }
+
+  el.classList.remove("hidden", "eliminated");
+  hud.classList.add("player-outside");
+  if (remaining != null) {
+    el.textContent = remaining > 0
+      ? `⚠️ Hors zone — retournez en ${remaining} s ou élimination`
+      : "⚠️ Hors zone — élimination imminente";
+  } else {
+    el.textContent = "⚠️ Hors zone — retournez dans la zone de jeu";
   }
 }
 
@@ -676,7 +963,7 @@ function renderMapLayers() {
 
   const activeMarkerIds = new Set();
   for (const [id, p] of Object.entries(currentState.players)) {
-    if (!p.lastLocation || id === myId) continue;
+    if (!p.lastLocation || id === myId || p.eliminated) continue;
 
     const isCop = id !== currentState.fugitiveId;
     const hideFromCops = id === currentState.fugitiveId && !isFugitive && (phase === "rally" || phase === "active");
@@ -712,7 +999,8 @@ function renderMapLayers() {
       }).addTo(map);
       rallyFlagMarker = L.marker([rp.lat, rp.lng], { icon: emojiIcon("📍"), zIndexOffset: 400 }).addTo(map);
       const areaR = currentState.playArea?.radiusM ?? 500;
-      map.setView([rp.lat, rp.lng], mapZoomForRadius(areaR));
+      const viewTarget = getSelfLocation() ?? currentState.playArea?.center ?? rp;
+      map.setView([viewTarget.lat, viewTarget.lng], mapZoomForRadius(areaR));
     } else {
       rallyMarker.setLatLng([rp.lat, rp.lng]);
       rallyMarker.setRadius(rallyHit);
@@ -753,7 +1041,6 @@ function renderMapLayers() {
 }
 
 function renderSetupMapLayers() {
-  if (myMarker) { map.removeLayer(myMarker); myMarker = null; }
   for (const id of [...markers.keys()]) {
     map.removeLayer(markers.get(id));
     markers.delete(id);
@@ -765,6 +1052,14 @@ function renderSetupMapLayers() {
   if (!area?.center?.lat) return;
 
   const { center } = area;
+  const selfLoc = getSelfLocation();
+  if (selfLoc) {
+    myMarker = setEmojiMarker(myMarker, selfLoc.lat, selfLoc.lng, "👮", "", true);
+  } else if (myMarker) {
+    map.removeLayer(myMarker);
+    myMarker = null;
+  }
+
   if (!setupCenterMarker) {
     setupCenterMarker = L.marker([center.lat, center.lng], {
       icon: emojiIcon("📍"),
@@ -784,7 +1079,24 @@ function renderSetupMapLayers() {
     setupMapClickBound = true;
   }
 
-  map.setView([center.lat, center.lng], mapZoomForRadius(area.radiusM ?? 500));
+  const viewKey = `${center.lat.toFixed(5)},${center.lng.toFixed(5)},${area.radiusM}`;
+  if (lastSetupViewKey !== viewKey) {
+    map.setView([center.lat, center.lng], mapZoomForRadius(area.radiusM ?? 500), { animate: false });
+    lastSetupViewKey = viewKey;
+    scheduleMapResize();
+  }
+}
+
+function scheduleMapResize() {
+  if (!mapReady || !map) return;
+  clearTimeout(mapResizeTimer);
+  mapResizeTimer = setTimeout(() => {
+    map?.invalidateSize({ animate: false });
+  }, 120);
+}
+
+function refreshMapLayout() {
+  scheduleMapResize();
 }
 
 function onSetupMapClick(ev) {
@@ -804,28 +1116,24 @@ function clearSetupMapLayers() {
 }
 
 function ensureMap() {
-  if (mapReady) {
-    setTimeout(() => map.invalidateSize(), 100);
-    return;
-  }
-  map = L.map("map", { zoomControl: true });
+  if (mapReady) return;
+  map = L.map("map", { zoomControl: true, tap: true });
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
     maxZoom: 19,
     attribution: "&copy; OpenStreetMap &copy; CARTO"
   }).addTo(map);
-  map.setView([48.8566, 2.3522], 14);
+  const initial = getSelfLocation();
+  map.setView(initial ? [initial.lat, initial.lng] : [48.8566, 2.3522], 14);
   mapReady = true;
+  refreshMapLayout();
   map.on("zoomend moveend", () => {
     if (boundaryMaskLayer) applyHatchFill(boundaryMaskLayer);
   });
 
-  if (devMode && !mapClickBound) {
-    map.on("click", (e) => {
-      if (currentState?.phase === "setup" && me?.role === "organizer") return;
-      sendSimLocation(e.latlng.lat, e.latlng.lng);
-      showToast(`Téléporté vers ${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`);
-    });
-    mapClickBound = true;
+  if (!window.__sanchaseMapResizeBound) {
+    window.__sanchaseMapResizeBound = true;
+    window.addEventListener("resize", () => scheduleMapResize());
+    window.addEventListener("orientationchange", () => setTimeout(scheduleMapResize, 300));
   }
 }
 
@@ -843,50 +1151,72 @@ function startMissionHold() {
   if (!mission) return;
   const missionId = mission.id;
   holdMissionId = missionId;
-  ws.send(JSON.stringify({ type: "start_mission_hold", roomId, by: myId, missionId }));
   const btn = document.getElementById("mission-hold");
-  const total = MISSION_HOLD_SEC();
-  if (btn) btn.textContent = `Maintien… ${total}s (appuyer pour annuler)`;
-  if (btn) btn.className = "btn btn-danger";
-  const start = Date.now();
-  holdTimer = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - start) / 1000);
-    const left = Math.max(0, total - elapsed);
-    if (btn) btn.textContent = `Maintien… ${left}s (appuyer pour annuler)`;
-    if (elapsed >= total) {
-      clearInterval(holdTimer);
-      holdTimer = null;
-      finishMissionHold(missionId);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Démarrage…";
+  }
+
+  requestFreshLocation().then((loc) => {
+    if (loc) sendLocationUpdate(loc, false, { force: true });
+    if (!holdMissionId || holdMissionId !== missionId) return;
+    ws.send(JSON.stringify({ type: "start_mission_hold", roomId, by: myId, missionId }));
+    const total = MISSION_HOLD_SEC();
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = `Maintien… ${total}s (appuyer pour annuler)`;
+      btn.className = "btn btn-danger";
     }
-  }, 200);
+    const start = Date.now();
+    holdTimer = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - start) / 1000);
+      const left = Math.max(0, total - elapsed);
+      if (btn) btn.textContent = `Maintien… ${left}s (appuyer pour annuler)`;
+      if (elapsed >= total) {
+        clearInterval(holdTimer);
+        holdTimer = null;
+        finishMissionHold(missionId);
+      }
+    }, 200);
+  });
 }
 
 function finishMissionHold(missionId) {
   const btn = document.getElementById("mission-hold");
   if (btn) {
-    btn.textContent = "Démarrer la mission";
-    btn.className = "btn btn-primary";
+    btn.textContent = "Validation…";
+    btn.disabled = true;
   }
   holdMissionId = null;
 
-  const mission = currentState?.missions?.find((m) => m.id === missionId);
-  const loc = getSelfLocation();
-  if (!mission || !loc || !isNearMission(loc, mission.point)) {
-    ws.send(JSON.stringify({ type: "cancel_mission_hold", roomId, by: myId, missionId }));
-    showMissionOverlay("fail", "Mission échouée", "Trop loin de la cible");
-    renderGameActions({ ok: false, reason: "" });
-    return;
-  }
+  requestFreshLocation().then((loc) => {
+    if (loc) sendLocationUpdate(loc, false, { force: true });
+    const mission = currentState?.missions?.find((m) => m.id === missionId);
+    if (!mission) {
+      if (btn) {
+        btn.textContent = "Démarrer la mission";
+        btn.className = "btn btn-primary";
+        btn.disabled = false;
+      }
+      renderGameActions({ ok: false, reason: "" });
+      return;
+    }
 
-  pendingMissionResult = { missionId, missionName: mission.name };
-  ws.send(JSON.stringify({
-    type: "complete_mission_hold",
-    roomId,
-    by: myId,
-    missionId,
-    ...(devMode ? { devShortHold: true } : {})
-  }));
-  renderGameActions({ ok: false, reason: "" });
+    pendingMissionResult = { missionId, missionName: mission.name };
+    ws.send(JSON.stringify({
+      type: "complete_mission_hold",
+      roomId,
+      by: myId,
+      missionId,
+      ...(devMode ? { devShortHold: true } : {})
+    }));
+    if (btn) {
+      btn.textContent = "Démarrer la mission";
+      btn.className = "btn btn-primary";
+      btn.disabled = false;
+    }
+    renderGameActions({ ok: false, reason: "" });
+  });
 }
 
 function cancelHold() {
@@ -908,6 +1238,7 @@ function showScreen(name) {
   screens.entry.classList.toggle("hidden", name !== "entry");
   screens.lobby.classList.toggle("hidden", name !== "lobby");
   screens.game.classList.toggle("hidden", name !== "game");
+  if (name === "game") scheduleMapResize();
 }
 
 function setConnection(online) {
@@ -960,9 +1291,12 @@ function isLocalDev() {
   return h === "localhost" || h === "127.0.0.1" || h.startsWith("192.168.") || h.startsWith("10.");
 }
 
+function isMobileLayout() {
+  return window.matchMedia("(max-width: 768px)").matches;
+}
+
 function isDevMode() {
-  if (new URLSearchParams(window.location.search).get("dev") === "0") return false;
-  return isLocalDev() || new URLSearchParams(window.location.search).get("dev") === "1";
+  return new URLSearchParams(window.location.search).get("dev") !== "0";
 }
 
 function defaultSimLocation() {
@@ -973,27 +1307,81 @@ function defaultSimLocation() {
 
 function sendSimLocation(lat, lng) {
   simLocation = { lat, lng, accuracyM: 5, ts: Date.now() };
-  applyLocation(simLocation);
+  applyLocation(simLocation, { simulated: true });
   if (mapReady) map.setView([lat, lng], map.getZoom(), { animate: true });
-  if (roomId) {
-    ws.send(JSON.stringify({
-      type: "location_update",
-      roomId,
-      playerId: myId,
-      location: simLocation,
-      simulated: true
-    }));
+}
+
+function sendLocationUpdate(location, simulated = false, { force = false } = {}) {
+  if (!roomId || ws.readyState !== WebSocket.OPEN) return;
+  const now = Date.now();
+  if (!force && !simulated && lastLocationSent) {
+    const elapsed = now - lastLocationSentAt;
+    const moved = haversineMeters(lastLocationSent.lat, lastLocationSent.lng, location.lat, location.lng);
+    if (elapsed < 5000 && moved < 12) return;
+  }
+  lastLocationSentAt = now;
+  lastLocationSent = location;
+  ws.send(JSON.stringify({
+    type: "location_update",
+    roomId,
+    playerId: myId,
+    location,
+    simulated
+  }));
+}
+
+function applyLocation(location, { simulated = false, force = false } = {}) {
+  if (me) me.lastLocation = location;
+  sendLocationUpdate(location, simulated, { force });
+  if (currentState?.phase === "setup" && me?.role === "organizer" && !setupCenterSynced) {
+    syncSetupCenterToGps();
   }
 }
 
-function applyLocation(location) {
-  if (me) me.lastLocation = location;
-  if (currentState && mapReady) renderMapLayers();
+function requestFreshLocation() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        applyLocation({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracyM: pos.coords.accuracy,
+          ts: Date.now()
+        }, { force: true });
+        resolve(getSelfLocation());
+      },
+      () => resolve(getSelfLocation()),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 }
+    );
+  });
+}
+
+function syncSetupCenterToGps() {
+  if (setupCenterSynced || currentState?.phase !== "setup" || me?.role !== "organizer") return;
+  const loc = getSelfLocation();
+  if (!loc?.lat) return;
+  const center = currentState.playArea?.center;
+  if (center?.lat) {
+    const dist = haversineMeters(loc.lat, loc.lng, center.lat, center.lng);
+    if (dist < 5) {
+      setupCenterSynced = true;
+      lastSetupViewKey = null;
+      return;
+    }
+  }
+  sendPlayAreaCenter(loc.lat, loc.lng);
+  lastSetupViewKey = null;
+  setupCenterSynced = true;
 }
 
 function getSelfLocation() {
+  if (me?.lastLocation) return me.lastLocation;
   if (devMode && simLocation) return simLocation;
-  return me?.lastLocation ?? null;
+  return null;
 }
 
 function teleportToRally() {
@@ -1018,24 +1406,43 @@ function countRallyReached() {
   };
 }
 
+function missionReachRadiusM(loc) {
+  return MISSION_HIT_M + Math.min(25, loc?.accuracyM ?? 20);
+}
+
 function isNearMission(loc, point) {
-  if (!point?.lat) return false;
-  return haversineMeters(loc.lat, loc.lng, point.lat, point.lng) <= MISSION_HIT_M;
+  if (!point?.lat || !loc) return false;
+  return haversineMeters(loc.lat, loc.lng, point.lat, point.lng) <= missionReachRadiusM(loc);
 }
 
 function findMissionInRange() {
   const loc = getSelfLocation();
   if (!loc || !currentState) return null;
+
+  if (stickyMissionId) {
+    const sticky = currentState.missions.find((m) => m.id === stickyMissionId);
+    if (sticky && !sticky.completed && sticky.point?.lat) {
+      const dist = haversineMeters(loc.lat, loc.lng, sticky.point.lat, sticky.point.lng);
+      const exitR = MISSION_EXIT_M + Math.min(20, loc.accuracyM ?? 15);
+      if (dist <= exitR) return sticky;
+      stickyMissionId = null;
+    } else {
+      stickyMissionId = null;
+    }
+  }
+
   let best = null;
   let bestDist = Infinity;
+  const enterR = missionReachRadiusM(loc);
   for (const m of currentState.missions) {
     if (m.completed || !m.point?.lat) continue;
     const dist = haversineMeters(loc.lat, loc.lng, m.point.lat, m.point.lng);
-    if (dist <= MISSION_HIT_M && dist < bestDist) {
+    if (dist <= enterR && dist < bestDist) {
       best = m;
       bestDist = dist;
     }
   }
+  if (best) stickyMissionId = best.id;
   return best;
 }
 
@@ -1097,9 +1504,14 @@ function renderPlayAreaBoundary() {
   const area = currentState?.playArea;
   const visible = area?.center?.lat && area.radiusM && currentState.phase !== "lobby";
   if (!visible) {
+    lastPlayAreaBoundaryKey = null;
     removeBoundaryLayers();
     return;
   }
+
+  const boundaryKey = `${area.center.lat.toFixed(5)},${area.center.lng.toFixed(5)},${area.radiusM}`;
+  if (boundaryKey === lastPlayAreaBoundaryKey) return;
+  lastPlayAreaBoundaryKey = boundaryKey;
 
   ensureMapHatchPattern();
 

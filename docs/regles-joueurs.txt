@@ -1,0 +1,77 @@
+SanChase — discours pour les nouveaux joueurs
+==============================================
+
+Bienvenue dans SanChase ! C’est une chasse urbaine en vrai : un fugitif se cache et se déplace dans la ville, les flics le traquent avec leur téléphone. Voici comment ça marche.
+
+LE PRINCIPE
+-----------
+• Un joueur est le fugitif, tous les autres sont les flics.
+• Le fugitif doit accomplir 3 missions secrètes dans la zone de jeu.
+• Les flics doivent l’arrêter avant qu’il ait fini — ou tenir jusqu’à la fin du temps imparti.
+• Tout se joue dehors, avec le GPS de votre téléphone. Activez la localisation !
+
+AVANT DE COMMENCER
+------------------
+• Rejoignez la salle avec le code donné par l’organisateur, entrez votre prénom, puis appuyez sur « Je suis prêt ».
+• Il faut au moins 6 joueurs prêts pour lancer la partie (l’organisateur peut ajuster ce minimum).
+• Le fugitif est tiré au sort au lancement, ou choisi par l’organisateur selon les réglages de la salle.
+
+PRÉPARATION DU TERRAIN (organisateur)
+------------------------------------
+• Une fois la partie lancée, l’organisateur voit la carte et définit la zone de jeu : centre et taille du cercle.
+• Il se place là où il veut ancrer la zone, ajuste le rayon (de très petit cache-cache à grande chasse urbaine), puis valide.
+• Les autres joueurs voient un message d’attente pendant cette étape.
+
+RASSEMBLEMENT
+-------------
+• Chaque joueur reçoit une position de départ (cercle vert sur la carte).
+• Rendez-vous à votre cercle : l’application détecte automatiquement quand vous y êtes.
+• Quand tout le monde est en place, l’organisateur lance la chasse (ou force le départ si besoin).
+
+LA CHASSE
+---------
+• Durée maximale : 1 heure.
+• Tout le monde doit rester dans la zone de jeu (cercle visible sur la carte).
+• Si vous sortez de la zone, un compte à rebours de 20 secondes démarre : revenez vite !
+• Après 20 secondes hors zone, vous êtes éliminé. Si c’est le fugitif, les flics gagnent. Si c’est un flic, il ne joue plus mais la partie continue.
+
+OBJECTIF DU FUGITIF
+-------------------
+• 3 missions apparaissent sur votre carte (les flics ne voient pas où).
+• Approchez-vous d’une mission et maintenez le bouton « Démarrer la mission » pendant 30 secondes sans bouger.
+• Accomplissez les 3 missions pour gagner.
+
+OBJECTIF DES FLICS
+------------------
+• Retrouver le fugitif grâce aux indices de position et l’arrêter de près avec le bouton « Arrêter ».
+• L’arrestation ne marche que si vous êtes vraiment collé au fugitif (à portée GPS).
+• Échec d’arrestation : restez immobile 10 secondes avant de pouvoir réessayer. Pas de limite d’essais.
+
+RÉVÉLATIONS DE POSITION
+-----------------------
+• De temps en temps, les flics voient brièvement la position du fugitif sur la carte.
+• Grande zone : toutes les 7 minutes, affichée 30 secondes.
+• Petite zone (cache-cache) : toutes les 2 minutes, affichée 15 secondes.
+
+POUVOIRS SPÉCIAUX (une utilisation chacun, sauf le scan)
+--------------------------------------------------------
+Fugitif :
+• Scanner les flics — 2 fois par partie, 3 minutes par scan : vous voyez tous les flics sur la carte.
+• Leurre — 1 fois : à la prochaine révélation, les flics voient 3 positions possibles au lieu d’une.
+
+Flics :
+• Signal sonore — 1 fois : le fugitif entend un bruit fort sur son téléphone (sans révéler votre position).
+
+FIN DE PARTIE
+-------------
+• Fugitif gagne : 3 missions accomplies.
+• Flics gagnent : arrestation du fugitif, fugitif éliminé hors zone, ou temps écoulé sans victoire du fugitif.
+• Rendez-vous ensuite au point de debrief indiqué sur la carte.
+
+CONSEILS
+--------
+• Gardez l’application ouverte et le GPS actif pendant toute la partie.
+• Ne quittez jamais la zone : 20 secondes dehors, c’est éliminé.
+• Communiquez en vrai entre flics — mais le fugitif vous entend peut-être !
+
+Bon jeu, et que la chasse commence !

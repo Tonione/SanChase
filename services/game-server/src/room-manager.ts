@@ -28,6 +28,7 @@ import {
   cancelMissionHold,
   tickState,
   updateArrestStillness,
+  updatePlayerBoundary,
   useCopScan
 } from "../../../packages/shared/src/index.js";
 
@@ -59,6 +60,8 @@ export class RoomManager {
       copScanUses: 0,
       arrestPenaltyAnchor: null,
       arrestStillSinceTick: null,
+      outsideSinceTick: null,
+      eliminated: false,
       lastLocation: null
     });
     const token = randomUUID();
@@ -105,7 +108,7 @@ export class RoomManager {
     const room = this.requireRoom(roomId);
     const organizer = room.state.players[by];
     if (!organizer || organizer.role !== "organizer") throw new Error("only organizer can confirm setup");
-    confirmPlayAreaSetup(room.state);
+    confirmPlayAreaSetup(room.state, by);
     return room;
   }
 
@@ -143,6 +146,7 @@ export class RoomManager {
     const player = room.state.players[playerId];
     if (!player) throw new Error("player not found");
     player.lastLocation = simulated ? location : constrainLocation(room.state, player.lastLocation, location);
+    if (player.lastLocation) updatePlayerBoundary(room.state, playerId);
     if (room.state.phase === "active" && player.id !== room.state.fugitiveId && player.arrestPenaltyAnchor) {
       updateArrestStillness(room.state, playerId, player.lastLocation);
     }
@@ -201,6 +205,7 @@ export class RoomManager {
     const room = this.requireRoom(roomId);
     const player = room.state.players[by];
     if (!player || by === room.state.fugitiveId) throw new Error("only cops can use noise ping");
+    if (player.eliminated) throw new Error("vous êtes éliminé");
     if (player.usedNoisePing) throw new Error("noise ping already used");
     player.usedNoisePing = true;
     room.state.eventLog.push(`${Date.now()}:power:noise_ping:by:${by}`);

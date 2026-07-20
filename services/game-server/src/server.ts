@@ -99,7 +99,8 @@ wss.on("connection", (socket) => {
         return sync(msg.roomId, manager.setPlayAreaRadius(msg.roomId, msg.by, msg.radiusM).state);
       }
       if (msg.type === "location_update") {
-        return sync(msg.roomId, manager.updateLocation(msg.roomId, msg.playerId, msg.location, msg.simulated ?? false).state);
+        manager.updateLocation(msg.roomId, msg.playerId, msg.location, msg.simulated ?? false);
+        return;
       }
       if (msg.type === "trigger_action") return sync(msg.payload.roomId, manager.triggerAction(msg.payload.roomId, msg.payload).state);
       manager.heartbeat(msg.roomId, msg.playerId);

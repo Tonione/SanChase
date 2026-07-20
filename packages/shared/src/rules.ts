@@ -33,6 +33,7 @@ const MISSION_HOLD_SEC = 30;
 export const DEV_MISSION_HOLD_SEC = 5;
 export const MISSION_HIT_RADIUS_M = MISSION_HIT_M;
 export const COP_SCAN_DURATION_SEC = 180;
+export const OUTSIDE_GRACE_SEC = 20;
 export const MAX_COP_SCAN_USES = 2;
 
 export { clampPlayAreaRadiusM, PLAY_AREA_MIN_M, PLAY_AREA_MAX_M, PLAY_AREA_STEP_M };
@@ -176,6 +177,7 @@ export function playAreaRadiusInfo(state: GameState) {
 }
 
 export function beginPlayAreaSetup(state: GameState, center: Coordinates): void {
+  resetBoundaryState(state);
   const radiusM = resolvePlayAreaRadiusM(state);
   state.playArea = {
     center: { ...center, accuracyM: center.accuracyM, ts: center.ts },
@@ -203,10 +205,15 @@ export function setPlayAreaCenter(state: GameState, lat: number, lng: number): v
   assignRallyPoints(state, center);
 }
 
-export function confirmPlayAreaSetup(state: GameState): void {
+export function confirmPlayAreaSetup(state: GameState, organizerId?: string): void {
   if (state.phase !== "setup") throw new Error("La zone n'est pas en préparation");
   if (!state.playArea?.center) throw new Error("Zone de jeu non définie");
-  assignRallyPoints(state, state.playArea.center);
+  const organizer = organizerId ? state.players[organizerId] : undefined;
+  const center = organizer?.lastLocation ?? state.playArea.center;
+  if (organizer?.lastLocation) {
+    state.playArea = { ...state.playArea, center: { ...organizer.lastLocation } };
+  }
+  assignRallyPoints(state, center);
   state.phase = "rally";
   state.eventLog.push(`${Date.now()}:system:rally_started`);
 }
@@ -274,12 +281,40 @@ export function clampToPlayArea(area: PlayArea, location: Coordinates): Coordina
   return { ...edge, accuracyM: location.accuracyM, ts: location.ts };
 }
 
-export function constrainLocation(state: GameState, previous: Coordinates | null, next: Coordinates): Coordinates | null {
-  let loc = next;
-  if (state.playArea && (state.phase === "rally" || state.phase === "active")) {
-    loc = clampToPlayArea(state.playArea, loc);
+export function isInsidePlayArea(area: PlayArea, location: Coordinates): boolean {
+  return haversineMeters(area.center.lat, area.center.lng, location.lat, location.lng) <= area.radiusM;
+}
+
+export function outsideGraceRemainingSec(state: GameState, playerId: string): number | null {
+  const player = state.players[playerId];
+  if (!player?.outsideSinceTick || player.eliminated) return null;
+  return Math.max(0, OUTSIDE_GRACE_SEC - (state.tick - player.outsideSinceTick));
+}
+
+export function updatePlayerBoundary(state: GameState, playerId: string): void {
+  if (!state.playArea || !["rally", "active"].includes(state.phase)) return;
+  const player = state.players[playerId];
+  if (!player?.lastLocation || player.eliminated) return;
+
+  if (isInsidePlayArea(state.playArea, player.lastLocation)) {
+    player.outsideSinceTick = null;
+    return;
   }
-  return clampLocation(previous, loc);
+
+  if (player.outsideSinceTick === null) {
+    player.outsideSinceTick = state.tick;
+  }
+}
+
+export function resetBoundaryState(state: GameState): void {
+  for (const player of Object.values(state.players)) {
+    player.eliminated = false;
+    player.outsideSinceTick = null;
+  }
+}
+
+export function constrainLocation(state: GameState, previous: Coordinates | null, next: Coordinates): Coordinates | null {
+  return clampLocation(previous, next);
 }
 
 export function assignFugitiveMissions(state: GameState) {
@@ -291,11 +326,10 @@ export function assignFugitiveMissions(state: GameState) {
   const base = fugitive.lastLocation;
   const names = pickMissionNames(3);
   const radiusM = state.playArea?.radiusM ?? computePlayAreaRadiusM(Object.keys(state.players).length, state.settings.boundaryPreset);
-  const distances = missionDistancesM(radiusM);
-  state.missions = [0, 1, 2].map((i) => {
-    const bearing = ((Math.PI * 2) / 3) * i + Math.random() * 0.2;
-    const distance = distances[i];
-    const point = offsetMeters(base, distance, bearing);
+  const bearings = pickRandomMissionBearings(3);
+  const distances = shuffleMissionDistances(missionDistancesM(radiusM));
+  state.missions = bearings.map((bearing, i) => {
+    const point = offsetMeters(base, distances[i], bearing);
     const raw = { ...point, accuracyM: 10, ts: Date.now() };
     const placed = state.playArea ? clampToPlayArea(state.playArea, raw) : raw;
     return {
@@ -306,6 +340,40 @@ export function assignFugitiveMissions(state: GameState) {
       holdStartTick: null
     } as Mission;
   });
+}
+
+function pickRandomMissionBearings(count: number, minSepRad = Math.PI / 2.5): number[] {
+  const bearings: number[] = [];
+  for (let i = 0; i < count; i++) {
+    let placed = false;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const bearing = Math.random() * Math.PI * 2;
+      if (bearings.every((existing) => angularSeparationRad(existing, bearing) >= minSepRad)) {
+        bearings.push(bearing);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      const rotation = Math.random() * Math.PI * 2;
+      return Array.from({ length: count }, (_, idx) => rotation + ((Math.PI * 2) / count) * idx);
+    }
+  }
+  return bearings;
+}
+
+function angularSeparationRad(a: number, b: number): number {
+  const diff = Math.abs(a - b) % (Math.PI * 2);
+  return Math.min(diff, Math.PI * 2 - diff);
+}
+
+function shuffleMissionDistances(distances: number[]): number[] {
+  const copy = [...distances];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.map((distance) => distance * (0.82 + Math.random() * 0.36));
 }
 
 function pickMissionNames(count: number): string[] {
@@ -330,6 +398,8 @@ export function markRallyReached(state: GameState, playerId: string) {
 
 export function startMissionHold(state: GameState, playerId: string, missionId: string) {
   if (state.fugitiveId !== playerId) throw new Error("only fugitive can capture missions");
+  const player = state.players[playerId];
+  if (player?.eliminated) throw new Error("vous êtes éliminé");
   const mission = state.missions.find((m) => m.id === missionId);
   if (!mission || mission.completed) throw new Error("mission not available");
   if (!isPlayerNearMission(state, playerId, mission)) throw new Error("too far from mission point");
@@ -408,6 +478,8 @@ export function attemptArrest(state: GameState, copId: string): { success: boole
   const cop = state.players[copId];
   const fug = state.players[state.fugitiveId];
   if (!cop || !fug) throw new Error("player not found");
+  if (cop.eliminated) throw new Error("vous êtes éliminé");
+  if (fug.eliminated) throw new Error("fugitive already eliminated");
   const readiness = canAttemptArrest(cop, state.tick);
   if (!readiness.ok) throw new Error(readiness.reason);
   if (!cop.lastLocation || !fug.lastLocation) throw new Error("missing location for arrest");
@@ -435,6 +507,7 @@ export function attemptArrest(state: GameState, copId: string): { success: boole
 export function tickState(state: GameState): GameState {
   state.tick += 1;
   tickArrestRecovery(state);
+  tickBoundaryElimination(state);
   if (state.phase === "active") {
     if (state.tick >= state.durationSec) {
       state.phase = "finished";
@@ -459,7 +532,10 @@ export function revealPositions(state: GameState): Coordinates[] {
   const truth = fugitive.lastLocation;
   if (!state.decoyNextReveal) return [truth];
   state.decoyNextReveal = false;
-  return [truth, jitterPoint(truth, 180), jitterPoint(truth, 260)];
+  const radiusM = state.playArea?.radiusM ?? 1320;
+  const minD = Math.max(6, radiusM * 0.15);
+  const maxD = Math.max(minD + 4, radiusM * 0.55);
+  return [truth, makeDecoyPoint(state, truth, minD, maxD), makeDecoyPoint(state, truth, minD, maxD)];
 }
 
 export function isCopScanActive(state: GameState): boolean {
@@ -471,6 +547,7 @@ export function useCopScan(state: GameState, playerId: string) {
   if (state.fugitiveId !== playerId) throw new Error("seul le fugitif peut scanner les flics");
   const player = state.players[playerId];
   if (!player) throw new Error("joueur introuvable");
+  if (player.eliminated) throw new Error("vous êtes éliminé");
   if (player.copScanUses >= MAX_COP_SCAN_USES) throw new Error("scan des flics déjà utilisé deux fois");
   if (isCopScanActive(state)) throw new Error("un scan est déjà actif");
   player.copScanUses += 1;
@@ -481,6 +558,8 @@ export function useCopScan(state: GameState, playerId: string) {
 export function enableNextDecoyReveal(state: GameState, playerId: string) {
   if (state.fugitiveId !== playerId) throw new Error("only fugitive can enable decoy reveal");
   const player = state.players[playerId];
+  if (!player) throw new Error("joueur introuvable");
+  if (player.eliminated) throw new Error("vous êtes éliminé");
   if (player.usedDecoyPower) throw new Error("decoy power already used");
   player.usedDecoyPower = true;
   state.decoyNextReveal = true;
@@ -494,9 +573,62 @@ function computeDebriefPoint(state: GameState): Coordinates | null {
   return { lat: avgLat, lng: avgLng, accuracyM: 20, ts: Date.now() };
 }
 
+function missionReachRadiusM(loc: Coordinates | undefined): number {
+  return MISSION_HIT_M + Math.min(25, loc?.accuracyM ?? 20);
+}
+
 function isPlayerNearMission(state: GameState, playerId: string, mission: Mission) {
   const loc = state.players[playerId]?.lastLocation;
-  return !!loc && haversineMeters(loc.lat, loc.lng, mission.point.lat, mission.point.lng) <= MISSION_HIT_M;
+  return !!loc && haversineMeters(loc.lat, loc.lng, mission.point.lat, mission.point.lng) <= missionReachRadiusM(loc);
+}
+
+function tickBoundaryElimination(state: GameState): void {
+  if (!state.playArea || !["rally", "active"].includes(state.phase)) return;
+
+  for (const player of Object.values(state.players)) {
+    if (player.eliminated || !player.lastLocation || player.outsideSinceTick === null) continue;
+    if (state.tick - player.outsideSinceTick < OUTSIDE_GRACE_SEC) continue;
+    eliminatePlayerForBoundary(state, player.id);
+  }
+}
+
+function eliminatePlayerForBoundary(state: GameState, playerId: string): void {
+  const player = state.players[playerId];
+  if (!player || player.eliminated) return;
+  player.eliminated = true;
+  player.outsideSinceTick = null;
+  state.eventLog.push(`${Date.now()}:eliminated:${playerId}:boundary`);
+
+  if (playerId === state.fugitiveId) {
+    state.phase = "finished";
+    state.winner = "cops";
+    state.endReason = "boundary";
+    state.debriefPoint = computeDebriefPoint(state);
+    state.eventLog.push(`${Date.now()}:system:fugitive_eliminated_outside`);
+  }
+}
+
+function makeDecoyPoint(state: GameState, origin: Coordinates, minDistM: number, maxDistM: number): Coordinates {
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const scale = attempt < 8 ? 1 : 0.72;
+    const dist = (minDistM + Math.random() * (maxDistM - minDistM)) * scale;
+    const point = jitterPoint(origin, dist);
+    if (!state.playArea) return point;
+    const fromCenter = haversineMeters(state.playArea.center.lat, state.playArea.center.lng, point.lat, point.lng);
+    const fromTruth = haversineMeters(origin.lat, origin.lng, point.lat, point.lng);
+    if (fromCenter <= state.playArea.radiusM * 0.92 && fromTruth >= 4) {
+      return { ...point, accuracyM: origin.accuracyM, ts: Date.now() };
+    }
+  }
+
+  if (state.playArea) {
+    const bearing = Math.random() * Math.PI * 2;
+    const dist = state.playArea.radiusM * (0.2 + Math.random() * 0.45);
+    const fallback = offsetMeters(state.playArea.center, dist, bearing);
+    return { ...fallback, accuracyM: origin.accuracyM, ts: Date.now() };
+  }
+
+  return jitterPoint(origin, minDistM);
 }
 
 function jitterPoint(origin: Coordinates, radiusM: number): Coordinates {

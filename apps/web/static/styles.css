@@ -470,6 +470,30 @@ input::placeholder {
   50% { opacity: 0.75; }
 }
 
+.boundary-alert {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid rgba(239, 68, 68, 0.55);
+  font-size: 0.88rem;
+  margin-bottom: 8px;
+  text-align: center;
+  font-weight: 700;
+  color: #fca5a5;
+  animation: scan-alert-pulse 1.2s ease-in-out infinite;
+}
+
+.boundary-alert.eliminated {
+  animation: none;
+  background: rgba(71, 85, 105, 0.35);
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #cbd5e1;
+}
+
+.game-hud.player-outside {
+  border-bottom-color: rgba(239, 68, 68, 0.65);
+}
+
 .play-area-assessment {
   padding: 10px 12px;
   border-radius: 10px;
@@ -870,25 +894,78 @@ input::placeholder {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2000;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: rgba(11, 15, 20, 0.96);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.game-actions.hidden {
+  display: none;
 }
 
 .game-actions .btn {
   width: auto;
   flex: 1 1 auto;
   min-width: calc(50% - 4px);
-  padding: 10px 12px;
-  font-size: 0.82rem;
+  padding: 12px 14px;
+  font-size: 0.88rem;
+  min-height: 48px;
 }
 
 #map-wrap {
-  flex: 1;
+  flex: 1 1 auto;
   position: relative;
   min-height: 0;
+}
+
+.setup-play-area-controls {
+  margin-bottom: 8px;
 }
 
 #map {
   width: 100%;
   height: 100%;
+  touch-action: none;
+}
+
+#screen-game.actions-visible #map-wrap {
+  padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (max-width: 768px) {
+  #screen-game #map-wrap {
+    min-height: 50vh;
+    min-height: 50dvh;
+    flex: 1 1 50dvh;
+  }
+
+  #screen-game .game-hud {
+    max-height: 34vh;
+    max-height: 34dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-shrink: 0;
+  }
+
+  #screen-game .play-area-assessment {
+    display: none !important;
+  }
+
+  #screen-game .dev-panel {
+    max-height: 28vh;
+    overflow-y: auto;
+  }
+}
+
+#screen-game.phase-setup .play-area-assessment {
+  display: none;
 }
 
 .role-fugitive .game-hud {

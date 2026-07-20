@@ -40,6 +40,8 @@ export const PlayerSchema = z.object({
   copScanUses: z.number().int().nonnegative().max(2).default(0),
   arrestPenaltyAnchor: CoordinatesSchema.nullable().default(null),
   arrestStillSinceTick: z.number().int().nonnegative().nullable().default(null),
+  outsideSinceTick: z.number().int().nonnegative().nullable().default(null),
+  eliminated: z.boolean().default(false),
   lastLocation: CoordinatesSchema.nullable().default(null),
   cooldowns: z.record(ActionTypeSchema, z.number().int().nonnegative()).default({
     sonar_ping: 0,
@@ -83,7 +85,7 @@ export const GameStateSchema = z.object({
   decoyNextReveal: z.boolean().default(false),
   copScanUntilTick: z.number().int().nonnegative().default(0),
   winner: z.enum(["cops", "fugitive"]).nullable().default(null),
-  endReason: z.enum(["arrest", "missions", "timeout"]).nullable().default(null),
+  endReason: z.enum(["arrest", "missions", "timeout", "boundary"]).nullable().default(null),
   arrestedById: z.string().nullable().default(null),
   debriefPoint: CoordinatesSchema.nullable().default(null),
   eventLog: z.array(z.string())
