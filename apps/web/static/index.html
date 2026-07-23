@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0f14" />
     <title>SanChase</title>
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   </head>
@@ -13,7 +14,13 @@
       <!-- Entry: create or join (no map) -->
       <section id="screen-entry" class="screen screen-center">
         <div class="brand">
-          <div class="brand-logo">SanChase</div>
+          <div class="brand-lockup" aria-label="SanChase">
+            <span class="brand-word brand-word-san">San</span>
+            <div class="brand-mark-wrap">
+              <img src="/assets/logo.svg" alt="" class="brand-mark" width="64" height="59" aria-hidden="true" />
+            </div>
+            <span class="brand-word brand-word-chase">Chase</span>
+          </div>
           <div class="brand-tagline">Chasse urbaine en vrai</div>
         </div>
 
@@ -21,7 +28,7 @@
           <p class="card-title">Votre identité</p>
           <div class="field">
             <label for="name">Nom affiché</label>
-            <input id="name" placeholder="ex. Alex" autocomplete="nickname" />
+            <input id="name" placeholder="ex. Bill" autocomplete="nickname" />
           </div>
           <div class="field">
             <label for="room">Code de salle</label>
@@ -69,11 +76,12 @@
         <div id="organizer-panel" class="card hidden">
           <p class="card-title">Contrôles organisateur</p>
           <div id="lobby-play-area-controls" class="play-area-controls"></div>
-          <div class="field">
+          <div id="fugitive-manual-panel" class="field">
             <label for="fugitive-picker">Choisir le fugitif</label>
             <select id="fugitive-picker"></select>
           </div>
           <button id="btn-select-fugitive" class="btn btn-secondary btn-sm" style="width:100%;margin-bottom:10px">Définir le fugitif</button>
+          <p id="fugitive-random-hint" class="organizer-hint hidden">Le fugitif sera tiré au sort au lancement.</p>
           <button id="btn-start-launch" class="btn btn-primary" disabled>Lancer la partie</button>
         </div>
 
@@ -81,77 +89,99 @@
 
         <div id="dev-lobby-panel" class="dev-panel hidden" style="margin-top:14px">
           <span class="dev-label">GPS dev</span>
-          <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-lobby-loc">Envoyer position test</button>
+              <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-lobby-loc">Position test</button>
+              <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-real-gps">GPS réel</button>
+              <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-end-game-lobby">Fin de partie</button>
           <span class="dev-hint">Requis pour lancer sans GPS réel</span>
         </div>
       </section>
 
       <!-- Game: map + HUD (shown from rally onward) -->
       <section id="screen-game" class="hidden">
-        <div id="game-hud" class="game-hud">
-          <div class="game-hud-top">
-            <span id="phase-pill" class="phase-pill">…</span>
-            <span id="role-label" style="font-size:0.82rem;color:var(--muted)"></span>
+        <div id="game-map-stage" class="game-map-stage">
+          <div id="map-wrap">
+            <div id="map"></div>
+            <div id="game-start-overlay" class="game-over-overlay game-start-overlay hidden" aria-live="assertive">
+              <div class="game-over-content">
+                <div id="game-start-headline" class="game-over-headline"></div>
+                <div id="game-start-detail" class="game-over-detail"></div>
+                <div id="game-start-outcome" class="game-over-outcome"></div>
+              </div>
+            </div>
+            <div id="game-over-overlay" class="game-over-overlay hidden" aria-live="assertive">
+              <div class="game-over-content">
+                <div id="game-over-headline" class="game-over-headline"></div>
+                <div id="game-over-detail" class="game-over-detail"></div>
+                <div id="game-over-outcome" class="game-over-outcome"></div>
+                <div class="game-over-hint">Rendez-vous au point de debrief sur la carte</div>
+              </div>
+            </div>
+            <div id="mission-overlay" class="mission-overlay hidden" aria-live="assertive">
+              <div class="mission-overlay-card">
+                <div id="mission-overlay-icon" class="mission-overlay-icon"></div>
+                <div id="mission-overlay-title" class="mission-overlay-title"></div>
+                <div id="mission-overlay-sub" class="mission-overlay-sub"></div>
+              </div>
+            </div>
+            <div id="cop-mission-popup" class="cop-mission-popup hidden" aria-live="assertive">
+              <div class="cop-mission-popup-card">
+                <div class="cop-mission-popup-label">Objectif fugitif accompli</div>
+                <div id="cop-mission-popup-title" class="cop-mission-popup-title"></div>
+                <div id="cop-mission-popup-count" class="cop-mission-popup-count"></div>
+              </div>
+            </div>
           </div>
-          <div id="setup-banner" class="setup-banner hidden">
-            <strong>Préparez le terrain de jeu</strong> — ajustez la taille et l'emplacement de la zone, puis validez.
+          <img src="/assets/logo.svg" alt="" class="map-logo-overlay" width="44" height="40" aria-hidden="true" />
+          <div id="game-hud" class="game-hud">
+            <div class="game-hud-top">
+              <span id="phase-pill" class="phase-pill">…</span>
+              <span id="gps-quality" class="gps-quality hidden">GPS</span>
+              <span id="role-label" class="role-label"></span>
+            </div>
+            <div id="setup-banner" class="setup-banner hidden">
+              <strong>Préparez le terrain de jeu</strong> — ajustez la taille et l'emplacement de la zone, puis validez.
+            </div>
+            <div id="rally-banner" class="rally-banner hidden">
+              <strong>Allez à votre position de départ</strong> — rejoignez le cercle vert sur la carte.
+            </div>
+            <div id="rally-progress" class="rally-progress hidden"></div>
+            <div id="cop-mission-tracker" class="cop-mission-tracker hidden"></div>
+            <div id="cop-scan-alert" class="cop-scan-alert hidden"></div>
+            <div id="reveal-countdown" class="reveal-countdown hidden"></div>
+            <div id="boundary-alert" class="boundary-alert hidden"></div>
+            <div id="play-area-assessment" class="play-area-assessment hidden"></div>
+            <div id="setup-play-area-controls" class="play-area-controls setup-play-area-controls hidden"></div>
+            <details id="organizer-options" class="organizer-options hidden">
+              <summary>Options organisateur</summary>
+              <div id="game-play-area-controls" class="play-area-controls"></div>
+            </details>
+            <div id="game-status" class="status-banner hidden"></div>
           </div>
-          <div id="rally-banner" class="rally-banner hidden">
-            <strong>Allez à votre position de départ</strong> — rejoignez le cercle vert sur la carte.
+          <div id="dev-flyout" class="dev-flyout hidden">
+            <button type="button" id="dev-flyout-toggle" class="dev-flyout-toggle" aria-expanded="false" aria-controls="dev-panel" title="Outils dev">◂</button>
+            <div id="dev-panel" class="dev-panel hidden">
+              <span class="dev-label">GPS dev</span>
+              <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-rally">Position départ</button>
+              <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-mission">Mission</button>
+              <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-fugitive">Près du fugitif</button>
+              <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-reveal">Test révélation</button>
+              <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-real-gps-flyout">GPS réel</button>
+              <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-end-game">Fin de partie</button>
+              <div id="dev-play-area-controls" class="play-area-controls play-area-controls-compact hidden"></div>
+            </div>
           </div>
-          <div id="rally-progress" class="rally-progress hidden"></div>
-          <div id="cop-mission-tracker" class="cop-mission-tracker hidden"></div>
-          <div id="cop-scan-alert" class="cop-scan-alert hidden"></div>
-          <div id="boundary-alert" class="boundary-alert hidden"></div>
-          <div id="play-area-assessment" class="play-area-assessment hidden"></div>
-          <div id="setup-play-area-controls" class="play-area-controls setup-play-area-controls hidden"></div>
-          <details id="organizer-options" class="organizer-options hidden">
-            <summary>Options organisateur</summary>
-            <div id="game-play-area-controls" class="play-area-controls"></div>
-          </details>
-          <div id="game-status" class="status-banner hidden"></div>
-          <div id="dev-panel" class="dev-panel hidden">
-            <span class="dev-label">GPS dev</span>
-            <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-rally">Position départ</button>
-            <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-mission">Mission</button>
-            <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-fugitive">Près du fugitif</button>
-            <button type="button" class="btn btn-secondary btn-sm dev-btn" id="dev-reveal">Test révélation</button>
-            <div id="dev-play-area-controls" class="play-area-controls play-area-controls-compact hidden"></div>
+          <div id="organizer-flyout" class="organizer-flyout hidden">
+            <button type="button" id="organizer-flyout-toggle" class="organizer-flyout-toggle" aria-expanded="false" aria-controls="organizer-flyout-panel" title="Organisateur">▸</button>
+            <div id="organizer-flyout-panel" class="organizer-flyout-panel hidden">
+              <span class="organizer-flyout-label">Organisateur</span>
+              <button type="button" class="btn btn-secondary btn-sm" id="organizer-reset-game">Recommencer</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="organizer-quit-game">Quitter la partie</button>
+            </div>
           </div>
         </div>
-        <div id="map-wrap">
-          <div id="map"></div>
-          <div id="game-start-overlay" class="game-over-overlay game-start-overlay hidden" aria-live="assertive">
-            <div class="game-over-content">
-              <div id="game-start-headline" class="game-over-headline"></div>
-              <div id="game-start-detail" class="game-over-detail"></div>
-              <div id="game-start-outcome" class="game-over-outcome"></div>
-            </div>
-          </div>
-          <div id="game-over-overlay" class="game-over-overlay hidden" aria-live="assertive">
-            <div class="game-over-content">
-              <div id="game-over-headline" class="game-over-headline"></div>
-              <div id="game-over-detail" class="game-over-detail"></div>
-              <div id="game-over-outcome" class="game-over-outcome"></div>
-              <div class="game-over-hint">Rendez-vous au point de debrief sur la carte</div>
-            </div>
-          </div>
-          <div id="mission-overlay" class="mission-overlay hidden" aria-live="assertive">
-            <div class="mission-overlay-card">
-              <div id="mission-overlay-icon" class="mission-overlay-icon"></div>
-              <div id="mission-overlay-title" class="mission-overlay-title"></div>
-              <div id="mission-overlay-sub" class="mission-overlay-sub"></div>
-            </div>
-          </div>
-          <div id="cop-mission-popup" class="cop-mission-popup hidden" aria-live="assertive">
-            <div class="cop-mission-popup-card">
-              <div class="cop-mission-popup-label">Objectif fugitif accompli</div>
-              <div id="cop-mission-popup-title" class="cop-mission-popup-title"></div>
-              <div id="cop-mission-popup-count" class="cop-mission-popup-count"></div>
-            </div>
-          </div>
+        <div id="game-bottom-panel" class="game-bottom-panel">
+          <div id="game-actions" class="game-actions hidden"></div>
         </div>
-        <div id="game-actions" class="game-actions hidden"></div>
       </section>
     </div>
 

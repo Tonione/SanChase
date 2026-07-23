@@ -1,11 +1,12 @@
 import express from "express";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import { ClientMessageSchema, DEV_MISSION_HOLD_SEC, GameState, assessPlayArea, isCopScanActive, playAreaRadiusInfo, revealDisplaySec, ServerMessage } from "../../../packages/shared/src/index.js";
+import { ClientMessageSchema, DEV_MISSION_HOLD_SEC, GameState, assessPlayArea, buildPlayerView, isCopScanActive, playAreaRadiusInfo, revealDisplaySec, ServerMessage } from "../../../packages/shared/src/index.js";
 import { RoomManager } from "./room-manager.js";
 
 const manager = new RoomManager();
 const socketsByRoom = new Map<string, Map<string, WebSocket>>();
+const socketMeta = new WeakMap<WebSocket, { roomId: string; playerId: string }>();
 const isDevServer = process.env.NODE_ENV !== "production";
 
 const app = express();
@@ -16,7 +17,11 @@ const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
 wss.on("connection", (socket) => {
-  socket.on("message", (raw) => {
+  socket.on("close", () => {
+    const meta = socketMeta.get(socket);
+    if (meta) manager.disconnect(meta.roomId, meta.playerId);
+  });
+  socket.on("message", async (raw) => {
     try {
       const msg = ClientMessageSchema.parse(JSON.parse(raw.toString()));
       if (msg.type === "create_room") {
@@ -27,7 +32,7 @@ wss.on("connection", (socket) => {
         return;
       }
       if (msg.type === "join_room") {
-        const { room, reconnectToken } = manager.join(msg.roomId, msg.playerId, msg.name);
+        const { room, reconnectToken } = manager.join(msg.roomId, msg.playerId, msg.name, msg.reconnectToken);
         attachSocket(msg.roomId, msg.playerId, socket);
         send(socket, { type: "session", reconnectToken });
         sync(msg.roomId, room.state);
@@ -36,11 +41,11 @@ wss.on("connection", (socket) => {
       if (msg.type === "set_ready") return sync(msg.roomId, manager.setReady(msg.roomId, msg.playerId, msg.ready).state);
       if (msg.type === "select_fugitive") return sync(msg.roomId, manager.selectFugitive(msg.roomId, msg.by, msg.fugitiveId).state);
       if (msg.type === "start_game") return sync(msg.roomId, manager.startGame(msg.roomId, msg.by).state);
-      if (msg.type === "confirm_setup") return sync(msg.roomId, manager.confirmSetup(msg.roomId, msg.by).state);
+      if (msg.type === "confirm_setup") return sync(msg.roomId, (await manager.confirmSetup(msg.roomId, msg.by)).state);
       if (msg.type === "set_play_area_center") {
-        return sync(msg.roomId, manager.setPlayAreaCenter(msg.roomId, msg.by, msg.lat, msg.lng).state);
+        return sync(msg.roomId, (await manager.setPlayAreaCenter(msg.roomId, msg.by, msg.lat, msg.lng)).state);
       }
-      if (msg.type === "start_chase") return sync(msg.roomId, manager.startChase(msg.roomId, msg.by, msg.force ?? false).state);
+      if (msg.type === "start_chase") return sync(msg.roomId, (await manager.startChase(msg.roomId, msg.by, msg.force ?? false)).state);
       if (msg.type === "use_decoy_reveal") return sync(msg.roomId, manager.useDecoyReveal(msg.roomId, msg.by).state);
       if (msg.type === "use_cop_scan") {
         const room = manager.useCopScan(msg.roomId, msg.by);
@@ -79,15 +84,7 @@ wss.on("connection", (socket) => {
         }
         return sync(msg.roomId, room.state);
       }
-      if (msg.type === "cop_noise_ping") {
-        const room = manager.useCopNoisePing(msg.roomId, msg.by);
-        const fugitiveId = room.state.fugitiveId;
-        if (fugitiveId) {
-          const ws = socketsByRoom.get(msg.roomId)?.get(fugitiveId);
-          if (ws) send(ws, { type: "sound_event", sound: "noise_ping", reason: "cop_power" });
-        }
-        return sync(msg.roomId, room.state);
-      }
+      if (msg.type === "deploy_cop_radar") return sync(msg.roomId, manager.deployCopRadar(msg.roomId, msg.by).state);
       if (msg.type === "dev_trigger_reveal") {
         if (!isDevServer) throw new Error("dev reveal only available in dev mode");
         const room = manager.get(msg.roomId);
@@ -95,11 +92,28 @@ wss.on("connection", (socket) => {
         broadcastToCops(msg.roomId, room.state, { type: "reveal_positions", positions: manager.revealPositions(msg.roomId) });
         return;
       }
+      if (msg.type === "dev_reset_room") {
+        if (!isDevServer) throw new Error("dev reset only available in dev mode");
+        return sync(msg.roomId, manager.devResetRoom(msg.roomId, msg.by).state);
+      }
+      if (msg.type === "organizer_reset_game") {
+        const room = manager.organizerResetGame(msg.roomId, msg.by);
+        broadcast(msg.roomId, { type: "action_event", message: "Nouvelle manche — ajustez la zone de jeu." });
+        return sync(msg.roomId, room.state);
+      }
+      if (msg.type === "organizer_quit_game") {
+        manager.organizerQuitGame(msg.roomId, msg.by);
+        broadcast(msg.roomId, { type: "room_closed", reason: "L'organisateur a terminé la partie." });
+        socketsByRoom.delete(msg.roomId);
+        return;
+      }
       if (msg.type === "set_play_area_radius") {
-        return sync(msg.roomId, manager.setPlayAreaRadius(msg.roomId, msg.by, msg.radiusM).state);
+        return sync(msg.roomId, (await manager.setPlayAreaRadius(msg.roomId, msg.by, msg.radiusM)).state);
       }
       if (msg.type === "location_update") {
-        manager.updateLocation(msg.roomId, msg.playerId, msg.location, msg.simulated ?? false);
+        void manager.updateLocation(msg.roomId, msg.playerId, msg.location, msg.simulated ?? false).catch((err) => {
+          send(socket, { type: "error", message: String(err) });
+        });
         return;
       }
       if (msg.type === "trigger_action") return sync(msg.payload.roomId, manager.triggerAction(msg.payload.roomId, msg.payload).state);
@@ -143,7 +157,8 @@ function sync(roomId: string, state: GameState) {
       state: sanitized,
       startEligibility: manager.startEligibility(roomId),
       playAreaAssessment,
-      playAreaRadius: playAreaRadiusInfo(state)
+      playAreaRadius: playAreaRadiusInfo(state),
+      playerView: buildPlayerView(state, playerId)
     }));
   }
 }
@@ -204,6 +219,7 @@ function attachSocket(roomId: string, playerId: string, socket: WebSocket) {
   const roomSockets = socketsByRoom.get(roomId) ?? new Map<string, WebSocket>();
   roomSockets.set(playerId, socket);
   socketsByRoom.set(roomId, roomSockets);
+  socketMeta.set(socket, { roomId, playerId });
 }
 
 function send(socket: WebSocket, msg: ServerMessage) {

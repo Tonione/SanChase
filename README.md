@@ -5,8 +5,9 @@ Web-first, real-world city chase game inspired by Scotland Yard.
 ## Quick start
 
 - `npm install`
-- `npm run dev:server`
-- `npm run dev:web`
+- **Rehearsal / testing:** `npm run dev:tunnel` — Cloudflare link, dev flyout, manual GPS, 2-player min
+- **Game day:** `npm run start:tunnel` — Cloudflare link, live GPS
+- See `docs/mac-cloudflare-tunnel.md` for setup (cloudflared, optional link notifications)
 - `npm test`
 
 ## Build for hosting
@@ -14,7 +15,7 @@ Web-first, real-world city chase game inspired by Scotland Yard.
 - `npm run build:web` (outputs static site to `dist/web`)
 - Backend runs with `npm run start:server`
 - Deployment instructions: `docs/deployment-oracle.md` (free Oracle VM + Cloudflare Pages)
-- **Mac + Cloudflare quick tunnel (no VM):** `docs/mac-cloudflare-tunnel.md` → `npm run dev:tunnel`
+- **Mac + Cloudflare quick tunnel (no VM):** `docs/mac-cloudflare-tunnel.md` → `npm run dev:tunnel` or `npm run start:tunnel`
 
 ## Structure
 

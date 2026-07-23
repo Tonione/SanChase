@@ -20,13 +20,20 @@ export const RoomSettingsSchema = z.object({
   roomName: z.string().min(1),
   durationSec: z.number().int().positive(),
   maxPlayers: z.number().int().min(2).max(30),
-  minPlayersToStart: z.number().int().min(2).default(6),
+  minPlayersToStart: z.number().int().min(2).default(2),
   boundaryPreset: z.enum(["district_small", "district_medium", "district_large"]),
   fugitiveSelection: FugitiveSelectionSchema.default("random"),
   playAreaRadiusM: z.number().positive().optional(),
   actionToggles: z.record(ActionTypeSchema, z.boolean())
 });
 export type RoomSettings = z.infer<typeof RoomSettingsSchema>;
+
+export const CopRadarSchema = z.object({
+  id: z.string(),
+  ownerId: z.string(),
+  point: CoordinatesSchema
+});
+export type CopRadar = z.infer<typeof CopRadarSchema>;
 
 export const PlayerSchema = z.object({
   id: z.string().min(3),
@@ -35,14 +42,17 @@ export const PlayerSchema = z.object({
   connected: z.boolean().default(true),
   ready: z.boolean().default(false),
   reachedRally: z.boolean().default(false),
-  usedNoisePing: z.boolean().default(false),
+  usedRadar: z.boolean().default(false),
   usedDecoyPower: z.boolean().default(false),
   copScanUses: z.number().int().nonnegative().max(2).default(0),
   arrestPenaltyAnchor: CoordinatesSchema.nullable().default(null),
-  arrestStillSinceTick: z.number().int().nonnegative().nullable().default(null),
+  arrestStillRemainingSec: z.number().int().nonnegative().nullable().default(null),
+  arrestStillCounting: z.boolean().default(false),
   outsideSinceTick: z.number().int().nonnegative().nullable().default(null),
   eliminated: z.boolean().default(false),
   lastLocation: CoordinatesSchema.nullable().default(null),
+  missionProximityId: z.string().nullable().default(null),
+  missionProximityStreak: z.number().int().nonnegative().default(0),
   cooldowns: z.record(ActionTypeSchema, z.number().int().nonnegative()).default({
     sonar_ping: 0,
     jam: 0,
@@ -80,6 +90,7 @@ export const GameStateSchema = z.object({
   playArea: PlayAreaSchema.nullable().default(null),
   rallyPoints: z.record(z.string(), CoordinatesSchema),
   missions: z.array(MissionSchema),
+  copRadars: z.array(CopRadarSchema).default([]),
   revealUntilTick: z.number().int().nonnegative(),
   nextRevealTick: z.number().int().nonnegative(),
   decoyNextReveal: z.boolean().default(false),
@@ -110,7 +121,7 @@ export const DEFAULT_SETTINGS: RoomSettings = {
   roomName: "Chasse urbaine",
   durationSec: 3600,
   maxPlayers: 12,
-  minPlayersToStart: 6,
+  minPlayersToStart: 2,
   boundaryPreset: "district_medium",
   fugitiveSelection: "random",
   actionToggles: {

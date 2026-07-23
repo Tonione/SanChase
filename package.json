@@ -9,12 +9,15 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "SANCHASE_DEV=1 bash scripts/run-stack.sh",
+    "start": "SANCHASE_DEV=0 bash scripts/run-stack.sh",
     "dev:server": "tsx services/game-server/src/server.ts",
-    "dev:web": "tsx apps/web/src/dev-server.ts",
+    "dev:web": "SANCHASE_DEV=1 tsx apps/web/src/dev-server.ts",
     "dev:gateway": "tsx apps/web/src/gateway-server.ts",
-    "dev:tunnel": "bash scripts/mac/start-tunneled-dev.sh",
+    "dev:tunnel": "SANCHASE_DEV=1 bash scripts/mac/start-tunnel.sh",
+    "start:tunnel": "SANCHASE_DEV=0 bash scripts/mac/start-tunnel.sh",
     "start:server": "node --import tsx services/game-server/src/server.ts",
-    "start:web": "node --import tsx apps/web/src/dev-server.ts",
+    "start:web": "SANCHASE_DEV=0 tsx apps/web/src/dev-server.ts",
     "build:web": "node scripts/build-web.mjs",
     "build": "npm run build:web",
     "test": "vitest run",

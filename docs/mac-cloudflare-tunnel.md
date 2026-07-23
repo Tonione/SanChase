@@ -20,21 +20,31 @@ Copy `.env.example` → `.env` and configure **one** channel:
 | **Telegram** | Message [@BotFather](https://t.me/BotFather), get token + chat id → `.env` |
 | **WhatsApp** | Set `WHATSAPP_PHONE=336…` — opens WhatsApp with the link pre-filled (tap Send) |
 
-Every `npm run dev:tunnel` also **copies the link to your clipboard** and shows a Mac notification.
+Every tunnel start also **copies the link to your clipboard** and shows a Mac notification.
 
-## Start (one command)
+## Start
 
-```bash
-npm run dev:tunnel
-```
+| When | Command |
+|------|---------|
+| Testing / rehearsal | `npm run dev:tunnel` |
+| Game day (D-day) | `npm run start:tunnel` |
 
-Wait ~30 seconds. The script prints **one link**, for example:
+Both print a public **HTTPS link** (~30 s after launch), for example:
 
 ```
 https://sanchase-demo.trycloudflare.com
 ```
 
-Send that link to players. No extra parameters needed.
+Send that link to players. No URL parameters needed — dev vs game mode is set by which command you run.
+
+### What each mode does
+
+| | `dev:tunnel` | `start:tunnel` |
+|---|--------------|----------------|
+| Dev flyout (top-right) | yes | no |
+| GPS | manual via flyout | live from phone |
+| Min players to start | 2 | 2 |
+| Server dev tools (reset room, etc.) | yes | no |
 
 ## What runs
 
@@ -49,10 +59,10 @@ One link serves both the app and the WebSocket.
 ## Game day checklist
 
 1. Mac plugged in, sleep disabled (**System Settings → Battery → Prevent sleep** or `caffeinate`)
-2. `npm run dev:tunnel` in project folder
+2. `npm run start:tunnel` in project folder
 3. Link is copied / pushed automatically if `.env` is set; otherwise copy from terminal
 4. Organizer creates room; others join with the same room code
-5. For GPS-free testing on desktop, add `?dev=1` to the URL (phones should use real GPS: no `dev=1`)
+5. Use `npm run dev:tunnel` only for rehearsals (desktop GPS sim via dev flyout)
 
 ## Troubleshooting
 

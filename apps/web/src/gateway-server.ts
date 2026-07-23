@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket, { WebSocketServer } from "ws";
+import { mountRuntimeConfig } from "./runtime-config.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const staticRoot = path.resolve(dirname, "../static");
@@ -12,6 +13,7 @@ const apiBase = `http://${apiHost}:${apiPort}`;
 const apiWs = `ws://${apiHost}:${apiPort}/ws`;
 
 const app = express();
+mountRuntimeConfig(app);
 app.use(express.static(staticRoot));
 
 app.get("/health", async (_req, res) => {

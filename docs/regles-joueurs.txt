@@ -13,7 +13,7 @@ LE PRINCIPE
 AVANT DE COMMENCER
 ------------------
 • Rejoignez la salle avec le code donné par l’organisateur, entrez votre prénom, puis appuyez sur « Je suis prêt ».
-• Il faut au moins 6 joueurs prêts pour lancer la partie (l’organisateur peut ajuster ce minimum).
+• Il faut au moins 2 joueurs prêts pour lancer la partie.
 • Le fugitif est tiré au sort au lancement, ou choisi par l’organisateur selon les réglages de la salle.
 
 PRÉPARATION DU TERRAIN (organisateur)
@@ -56,11 +56,11 @@ RÉVÉLATIONS DE POSITION
 POUVOIRS SPÉCIAUX (une utilisation chacun, sauf le scan)
 --------------------------------------------------------
 Fugitif :
-• Scanner les flics — 2 fois par partie, 3 minutes par scan : vous voyez tous les flics sur la carte.
+• Scanner les flics — 2 fois par partie, 3 minutes par scan : vous voyez tous les flics et leurs radars posés sur la carte.
 • Leurre — 1 fois : à la prochaine révélation, les flics voient 3 positions possibles au lieu d’une.
 
 Flics :
-• Signal sonore — 1 fois : le fugitif entend un bruit fort sur son téléphone (sans révéler votre position).
+• Radar — 1 fois : posez un radar fixe à votre position (📡 sur la carte). Portée ~75 m en grande zone, réduite sur petites cartes. Si le fugitif entre dans la zone, son emoji apparaît sur votre téléphone. Seul vous voyez votre radar.
 
 FIN DE PARTIE
 -------------

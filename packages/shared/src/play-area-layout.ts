@@ -30,6 +30,12 @@ export function rallyHitRadiusM(radiusM: number): number {
   return Math.min(40, Math.max(8, radiusM * 0.35));
 }
 
+/** Cop radar range — 75 m in urban zones, scaled down for small play areas. */
+export function radarRangeM(radiusM: number): number {
+  if (radiusM >= 400) return 75;
+  return Math.min(75, Math.max(12, Math.round(radiusM * 0.18)));
+}
+
 /** Minimum radius required for a specific target size (for assessment). */
 export function computeRequiredRadiusM(radiusM: number): number {
   const spread = rallySpreadM(radiusM);

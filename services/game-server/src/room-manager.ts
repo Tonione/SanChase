@@ -18,24 +18,32 @@ import {
   computePlayAreaRadiusM,
   constrainLocation,
   createInitialState,
+  deployCopRadar,
   enableNextDecoyReveal,
   markRallyReached,
   revealIntervalSec,
   revealPositions,
+  resetRoomToLobby,
+  resetRoomToSetup,
   setPlayAreaCenter,
   setPlayAreaRadius,
   startMissionHold,
   cancelMissionHold,
   tickState,
   updateArrestStillness,
+  updateMissionProximity,
   updatePlayerBoundary,
   useCopScan
 } from "../../../packages/shared/src/index.js";
+import { snapMissionsInState, snapRallyPointsInState } from "./street-placement.js";
+import { clearPlayerSnapCache, maybeSnapPlayerLocation } from "./player-location-snap.js";
+import { StreetSnapContext } from "./street-snap.js";
 
 export type Room = { state: GameState; tokens: Map<string, string> };
 
 export class RoomManager {
   private readonly rooms = new Map<string, Room>();
+  private readonly streetSnapContexts = new Map<string, StreetSnapContext>();
 
   createRoom(roomId: string, creatorId: string, creatorName: string, settings: Partial<RoomSettings>) {
     if (this.rooms.has(roomId)) throw new Error("room already exists");
@@ -44,8 +52,17 @@ export class RoomManager {
     return this.join(roomId, creatorId, creatorName);
   }
 
-  join(roomId: string, playerId: string, name: string) {
+  join(roomId: string, playerId: string, name: string, reconnectToken?: string) {
     const room = this.requireRoom(roomId);
+    const existing = room.state.players[playerId];
+    if (existing) {
+      if (!reconnectToken || room.tokens.get(playerId) !== reconnectToken) {
+        throw new Error("session expirée — rejoignez la salle manuellement");
+      }
+      existing.connected = true;
+      if (name.trim()) existing.name = name.trim();
+      return { room, reconnectToken: room.tokens.get(playerId)! };
+    }
     if (Object.keys(room.state.players).length >= room.state.settings.maxPlayers) throw new Error("room is full");
     const isFirst = Object.keys(room.state.players).length === 0;
     room.state.players[playerId] = PlayerSchema.parse({
@@ -55,11 +72,12 @@ export class RoomManager {
       connected: true,
       ready: false,
       reachedRally: false,
-      usedNoisePing: false,
+      usedRadar: false,
       usedDecoyPower: false,
       copScanUses: 0,
       arrestPenaltyAnchor: null,
-      arrestStillSinceTick: null,
+      arrestStillRemainingSec: null,
+      arrestStillCounting: false,
       outsideSinceTick: null,
       eliminated: false,
       lastLocation: null
@@ -104,23 +122,27 @@ export class RoomManager {
     return room;
   }
 
-  confirmSetup(roomId: string, by: string) {
+  async confirmSetup(roomId: string, by: string) {
     const room = this.requireRoom(roomId);
     const organizer = room.state.players[by];
     if (!organizer || organizer.role !== "organizer") throw new Error("only organizer can confirm setup");
     confirmPlayAreaSetup(room.state, by);
+    await snapRallyPointsInState(room.state);
     return room;
   }
 
-  setPlayAreaCenter(roomId: string, by: string, lat: number, lng: number) {
+  async setPlayAreaCenter(roomId: string, by: string, lat: number, lng: number) {
     const room = this.requireRoom(roomId);
     const organizer = room.state.players[by];
     if (!organizer || organizer.role !== "organizer") throw new Error("only organizer can set play area center");
     setPlayAreaCenter(room.state, lat, lng);
+    if (room.state.phase === "rally") {
+      await snapRallyPointsInState(room.state);
+    }
     return room;
   }
 
-  startChase(roomId: string, by: string, force = false) {
+  async startChase(roomId: string, by: string, force = false) {
     const room = this.requireRoom(roomId);
     const starter = room.state.players[by];
     if (!starter || starter.role !== "organizer") throw new Error("only organizer can force chase start");
@@ -132,6 +154,7 @@ export class RoomManager {
     const radiusM = room.state.playArea?.radiusM ?? 1320;
     room.state.nextRevealTick = room.state.tick + revealIntervalSec(radiusM);
     assignFugitiveMissions(room.state);
+    await snapMissionsInState(room.state);
     room.state.eventLog.push(`${Date.now()}:system:${force ? "chase_forced" : "chase_started"}`);
     return room;
   }
@@ -141,17 +164,37 @@ export class RoomManager {
     return { room, result: attemptArrest(room.state, by) };
   }
 
-  updateLocation(roomId: string, playerId: string, location: Coordinates, simulated = false) {
+  async updateLocation(roomId: string, playerId: string, location: Coordinates, simulated = false) {
     const room = this.requireRoom(roomId);
     const player = room.state.players[playerId];
     if (!player) throw new Error("player not found");
-    player.lastLocation = simulated ? location : constrainLocation(room.state, player.lastLocation, location);
-    if (player.lastLocation) updatePlayerBoundary(room.state, playerId);
+
+    let nextLocation = location;
+    if (!simulated && room.state.playArea && location.accuracyM > 40) {
+      const ctx = await this.streetSnapContextForRoom(roomId, room.state.playArea);
+      nextLocation = await maybeSnapPlayerLocation(`${roomId}:${playerId}`, location, room.state.playArea, ctx);
+    }
+
+    player.lastLocation = simulated ? nextLocation : constrainLocation(room.state, player.lastLocation, nextLocation);
+    if (player.lastLocation) {
+      updatePlayerBoundary(room.state, playerId);
+      updateMissionProximity(room.state, playerId);
+    }
     if (room.state.phase === "active" && player.id !== room.state.fugitiveId && player.arrestPenaltyAnchor) {
-      updateArrestStillness(room.state, playerId, player.lastLocation);
+      updateArrestStillness(room.state, playerId, player.lastLocation!);
     }
     if (room.state.phase === "rally") markRallyReached(room.state, playerId);
     return room;
+  }
+
+  private async streetSnapContextForRoom(roomId: string, playArea: NonNullable<GameState["playArea"]>) {
+    let ctx = this.streetSnapContexts.get(roomId);
+    if (!ctx) {
+      ctx = new StreetSnapContext();
+      this.streetSnapContexts.set(roomId, ctx);
+    }
+    await ctx.loadForArea(playArea.center.lat, playArea.center.lng, playArea.radiusM);
+    return ctx;
   }
 
   startMissionHold(roomId: string, by: string, missionId: string) {
@@ -190,7 +233,7 @@ export class RoomManager {
     return room;
   }
 
-  setPlayAreaRadius(roomId: string, by: string, radiusM: number | null) {
+  async setPlayAreaRadius(roomId: string, by: string, radiusM: number | null) {
     const room = this.requireRoom(roomId);
     const organizer = room.state.players[by];
     if (!organizer || organizer.role !== "organizer") throw new Error("only organizer can set play area radius");
@@ -198,17 +241,18 @@ export class RoomManager {
       throw new Error("cannot change play area radius now");
     }
     setPlayAreaRadius(room.state, radiusM);
+    if (room.state.phase === "rally") {
+      await snapRallyPointsInState(room.state);
+    }
     return room;
   }
 
-  useCopNoisePing(roomId: string, by: string) {
+  deployCopRadar(roomId: string, by: string) {
     const room = this.requireRoom(roomId);
     const player = room.state.players[by];
-    if (!player || by === room.state.fugitiveId) throw new Error("only cops can use noise ping");
+    if (!player || by === room.state.fugitiveId) throw new Error("only cops can deploy radar");
     if (player.eliminated) throw new Error("vous êtes éliminé");
-    if (player.usedNoisePing) throw new Error("noise ping already used");
-    player.usedNoisePing = true;
-    room.state.eventLog.push(`${Date.now()}:power:noise_ping:by:${by}`);
+    deployCopRadar(room.state, by);
     return room;
   }
 
@@ -216,6 +260,39 @@ export class RoomManager {
     const room = this.requireRoom(roomId);
     const player = room.state.players[playerId];
     if (player) player.connected = true;
+  }
+
+  disconnect(roomId: string, playerId: string) {
+    const room = this.rooms.get(roomId);
+    const player = room?.state.players[playerId];
+    if (player) player.connected = false;
+  }
+
+  devResetRoom(roomId: string, by: string) {
+    const room = this.requireRoom(roomId);
+    if (!room.state.players[by]) throw new Error("player not found");
+    room.state = resetRoomToLobby(room.state);
+    this.streetSnapContexts.delete(roomId);
+    clearPlayerSnapCache(roomId);
+    return room;
+  }
+
+  organizerResetGame(roomId: string, by: string) {
+    const room = this.requireRoom(roomId);
+    room.state = resetRoomToSetup(room.state, by);
+    this.streetSnapContexts.delete(roomId);
+    clearPlayerSnapCache(roomId);
+    return room;
+  }
+
+  organizerQuitGame(roomId: string, by: string) {
+    const room = this.requireRoom(roomId);
+    const organizer = room.state.players[by];
+    if (!organizer || organizer.role !== "organizer") throw new Error("only organizer can quit game");
+    if (room.state.phase === "lobby") throw new Error("no game in progress");
+    this.streetSnapContexts.delete(roomId);
+    clearPlayerSnapCache(roomId);
+    this.rooms.delete(roomId);
   }
 
   startEligibility(roomId: string) {

@@ -65,8 +65,8 @@ describe("play area assessment", () => {
 describe("play area radius override", () => {
   it("stores override in lobby and applies on rally", () => {
     const state = createInitialState("roomx");
-    state.players.a = { id: "a", name: "A", role: "organizer", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillSinceTick: null, lastLocation: { lat: 48.85, lng: 2.35, accuracyM: 10, ts: 1 }, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
-    state.players.b = { id: "b", name: "B", role: "hunter", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillSinceTick: null, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
+    state.players.a = { id: "a", name: "A", role: "organizer", connected: true, ready: true, reachedRally: false, usedRadar: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillRemainingSec: null, arrestStillCounting: false, lastLocation: { lat: 48.85, lng: 2.35, accuracyM: 10, ts: 1 }, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
+    state.players.b = { id: "b", name: "B", role: "hunter", connected: true, ready: true, reachedRally: false, usedRadar: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillRemainingSec: null, arrestStillCounting: false, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
     setPlayAreaRadius(state, 1300);
     expect(state.settings.playAreaRadiusM).toBe(1300);
     assignRallyPoints(state, { lat: 48.85, lng: 2.35, accuracyM: 10, ts: 1 });
@@ -75,8 +75,8 @@ describe("play area radius override", () => {
 
   it("assigns compact rally points for hide-and-seek radius", () => {
     const state = createInitialState("roomx");
-    state.players.org1 = { id: "org1", name: "Org", role: "organizer", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillSinceTick: null, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
-    state.players.hun1 = { id: "hun1", name: "Hun", role: "hunter", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillSinceTick: null, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
+    state.players.org1 = { id: "org1", name: "Org", role: "organizer", connected: true, ready: true, reachedRally: false, usedRadar: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillRemainingSec: null, arrestStillCounting: false, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
+    state.players.hun1 = { id: "hun1", name: "Hun", role: "hunter", connected: true, ready: true, reachedRally: false, usedRadar: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillRemainingSec: null, arrestStillCounting: false, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
     setPlayAreaRadius(state, 50);
     assignRallyPoints(state, { lat: 48.85, lng: 2.35, accuracyM: 10, ts: 1 });
     const center = state.playArea!.center;
@@ -91,8 +91,8 @@ describe("play area radius override", () => {
 
   it("resets to auto when radius is cleared", () => {
     const state = createInitialState("roomx");
-    state.players.a = { id: "a", name: "A", role: "hunter", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillSinceTick: null, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
-    state.players.b = { id: "b", name: "B", role: "hunter", connected: true, ready: true, reachedRally: false, usedNoisePing: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillSinceTick: null, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
+    state.players.a = { id: "a", name: "A", role: "hunter", connected: true, ready: true, reachedRally: false, usedRadar: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillRemainingSec: null, arrestStillCounting: false, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
+    state.players.b = { id: "b", name: "B", role: "hunter", connected: true, ready: true, reachedRally: false, usedRadar: false, usedDecoyPower: false, copScanUses: 0, arrestPenaltyAnchor: null, arrestStillRemainingSec: null, arrestStillCounting: false, lastLocation: null, cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 } };
     setPlayAreaRadius(state, 1800);
     setPlayAreaRadius(state, null);
     expect(state.settings.playAreaRadiusM).toBeUndefined();
