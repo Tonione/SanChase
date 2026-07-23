@@ -476,6 +476,7 @@ function didStructureChange() {
     pa?.center?.lng?.toFixed(5),
     pa?.radiusM,
     s.settings?.playAreaRadiusM,
+    s.copScanUntilTick,
     JSON.stringify(s.rallyPoints),
     JSON.stringify(s.missions?.map((m) => ({ id: m.id, c: m.completed }))),
     Object.values(s.players).map((p) => `${p.id}:${p.ready}:${p.reachedRally}`).join("|")
@@ -1247,7 +1248,7 @@ function renderCopActions(wrap) {
   let radarBtn = wrap.querySelector("#cop-radar-btn");
   if (!radarBtn) {
     wrap.replaceChildren();
-    radarBtn = actionBtn("Poser radar", "btn-secondary", () => {
+    radarBtn = actionBtn("📡 Poser radar", "btn-secondary", () => {
       const loc = getSelfLocation();
       if (!loc) return showToast("Position GPS requise");
       wsSend(JSON.stringify({ type: "deploy_cop_radar", roomId, by: myId }));
@@ -1264,7 +1265,7 @@ function renderCopActions(wrap) {
   }
 
   radarBtn.disabled = !!me.usedRadar;
-  radarBtn.textContent = me.usedRadar ? "Radar (posé)" : "Poser radar";
+  radarBtn.textContent = me.usedRadar ? "📡 Radar (posé)" : "📡 Poser radar";
   radarBtn.title = me.usedRadar
     ? "Votre radar reste actif jusqu'à la fin de la partie"
     : `Place un radar fixe (portée ${Math.round(playerView.radarRangeM ?? 75)} m)`;
@@ -1491,6 +1492,18 @@ function clearRadarLayers() {
   radarSpotMarkers.clear();
 }
 
+function getRadarsForMap() {
+  const rangeM = playerView?.radarRangeM ?? radarRangeForPlayArea(currentState?.playArea?.radiusM ?? 1320);
+  const isFugitive = currentState?.fugitiveId === myId;
+  const scanActive = isCopScanActive(currentState);
+  let radars = playerView?.copRadars ?? [];
+  if (isFugitive && scanActive) {
+    if (!radars.length) radars = currentState?.copRadars ?? [];
+    return { radars, rangeM, scanMode: true };
+  }
+  return { radars, rangeM, scanMode: false };
+}
+
 function renderRadarLayers() {
   if (!mapReady || !currentState) return;
   if (currentState.phase !== "active") {
@@ -1498,9 +1511,9 @@ function renderRadarLayers() {
     return;
   }
 
-  const radars = playerView?.copRadars ?? [];
-  const detections = playerView?.radarDetections ?? [];
-  const rangeM = playerView?.radarRangeM ?? radarRangeForPlayArea(currentState.playArea?.radiusM ?? 1320);
+  const { radars, rangeM, scanMode } = getRadarsForMap();
+  const detections = scanMode ? [] : (playerView?.radarDetections ?? []);
+  const circleColor = scanMode ? "#fbbf24" : "#38bdf8";
   const activeRadarIds = new Set();
 
   for (const radar of radars) {
@@ -1509,22 +1522,29 @@ function renderRadarLayers() {
     if (!layers) {
       const circle = L.circle([radar.point.lat, radar.point.lng], {
         radius: rangeM,
-        color: "#38bdf8",
-        fillColor: "#38bdf8",
-        fillOpacity: 0.07,
-        weight: 1.5,
+        color: circleColor,
+        fillColor: circleColor,
+        fillOpacity: scanMode ? 0.1 : 0.07,
+        weight: scanMode ? 2 : 1.5,
         dashArray: "5 6"
       }).addTo(map);
       const pin = L.marker([radar.point.lat, radar.point.lng], {
         icon: emojiIcon("📡", "", false, "", true),
         zIndexOffset: 250
       }).addTo(map);
-      layers = { circle, pin };
+      layers = { circle, pin, scanMode };
       radarLayers.set(radar.id, layers);
     } else {
       layers.circle.setLatLng([radar.point.lat, radar.point.lng]);
       layers.circle.setRadius(rangeM);
+      layers.circle.setStyle({
+        color: circleColor,
+        fillColor: circleColor,
+        fillOpacity: scanMode ? 0.1 : 0.07,
+        weight: scanMode ? 2 : 1.5
+      });
       layers.pin.setLatLng([radar.point.lat, radar.point.lng]);
+      layers.scanMode = scanMode;
     }
   }
 

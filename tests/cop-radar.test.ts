@@ -4,7 +4,8 @@ import {
   computeRadarDetections,
   createInitialState,
   deployCopRadar,
-  radarRangeM
+  radarRangeM,
+  useCopScan
 } from "../packages/shared/src/index.js";
 
 describe("cop radar", () => {
@@ -69,5 +70,60 @@ describe("cop radar", () => {
     expect(view.radarDetections).toHaveLength(1);
     expect(buildPlayerView(state, "fug1").copRadars).toEqual([]);
     expect(buildPlayerView(state, "fug1").radarDetections).toEqual([]);
+  });
+
+  it("shows all radar ranges to the fugitive during a cop scan", () => {
+    const state = createInitialState("roomx");
+    state.phase = "active";
+    state.fugitiveId = "fug1";
+    state.playArea = { center: { lat: 48.8566, lng: 2.3522, accuracyM: 10, ts: 1 }, radiusM: 800 };
+    state.players.cop1 = {
+      id: "cop1",
+      name: "Bill",
+      role: "hunter",
+      connected: true,
+      ready: true,
+      reachedRally: true,
+      usedRadar: false,
+      usedDecoyPower: false,
+      copScanUses: 0,
+      arrestPenaltyAnchor: null,
+      arrestStillRemainingSec: null,
+      arrestStillCounting: false,
+      outsideSinceTick: null,
+      eliminated: false,
+      lastLocation: { lat: 48.8566, lng: 2.3522, accuracyM: 8, ts: Date.now() },
+      missionProximityId: null,
+      missionProximityStreak: 0,
+      cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 }
+    };
+    state.players.fug1 = {
+      id: "fug1",
+      name: "Fug",
+      role: "hunter",
+      connected: true,
+      ready: true,
+      reachedRally: true,
+      usedRadar: false,
+      usedDecoyPower: false,
+      copScanUses: 0,
+      arrestPenaltyAnchor: null,
+      arrestStillRemainingSec: null,
+      arrestStillCounting: false,
+      outsideSinceTick: null,
+      eliminated: false,
+      lastLocation: { lat: 48.857, lng: 2.353, accuracyM: 8, ts: Date.now() },
+      missionProximityId: null,
+      missionProximityStreak: 0,
+      cooldowns: { sonar_ping: 0, jam: 0, fake_clue: 0 }
+    };
+
+    deployCopRadar(state, "cop1");
+    useCopScan(state, "fug1");
+
+    const view = buildPlayerView(state, "fug1");
+    expect(view.copRadars).toHaveLength(1);
+    expect(view.radarRangeM).toBe(75);
+    expect(view.radarDetections).toEqual([]);
   });
 });

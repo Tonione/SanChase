@@ -56,7 +56,7 @@ RÉVÉLATIONS DE POSITION
 POUVOIRS SPÉCIAUX (une utilisation chacun, sauf le scan)
 --------------------------------------------------------
 Fugitif :
-• Scanner les flics — 2 fois par partie, 3 minutes par scan : vous voyez tous les flics et leurs radars posés sur la carte.
+• Scanner les flics — 2 fois par partie, 3 minutes par scan : vous voyez tous les flics, leurs radars posés (📡) et la portée de chaque radar sur la carte.
 • Leurre — 1 fois : à la prochaine révélation, les flics voient 3 positions possibles au lieu d’une.
 
 Flics :

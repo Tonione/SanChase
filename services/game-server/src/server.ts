@@ -176,16 +176,20 @@ function sanitizeStateForPlayer(state: GameState, playerId: string): GameState {
   const hidePositions = state.phase === "rally" || state.phase === "active";
 
   if (isFugitive) {
-    if (hidePositions && !(state.phase === "active" && isCopScanActive(state))) {
+    const scanActive = state.phase === "active" && isCopScanActive(state);
+    if (hidePositions && !scanActive) {
       const players = { ...state.players };
       for (const [id, player] of Object.entries(players)) {
         if (id !== playerId && id !== state.fugitiveId) {
           players[id] = { ...player, lastLocation: null };
         }
       }
-      return { ...state, players };
+      return { ...state, players, copRadars: [] };
     }
-    return state;
+    if (scanActive) {
+      return { ...state, copRadars: state.copRadars };
+    }
+    return { ...state, copRadars: [] };
   }
 
   const players = { ...state.players };
